@@ -85,4 +85,5 @@ python tests/native_html.py
 已在真实 0.5.0 环境完成规则测试、三个种子的原生通关和自然失败。详细结果与未验证项见 [验证记录](docs/VALIDATION.md)，实际原生截图位于 [`docs/screenshots/`](docs/screenshots/)。
 
 源码与原创像素图集使用 MIT；随包 Noto Sans SC 字体使用 OFL，许可证位于 `assets/font-license.txt`。ultralight-py 和 Ultralight/AppCore 遵循各自许可证。
+项目的 MIT 许可证不替代随游戏分发的第三方组件许可证。
 Alpine.js 3.17.4 随项目本地提供，无需运行时联网；MIT 许可证位于 `assets/vendor/alpine-LICENSE.txt`。

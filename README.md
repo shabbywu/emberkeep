@@ -84,4 +84,5 @@ python tests/native_html.py
 Rule tests, three native winning campaigns and a natural defeat were validated with the real 0.5.0 runtime. See [validation](docs/VALIDATION.md) for results and limits, and [`docs/screenshots/`](docs/screenshots/) for native captures.
 
 Code and original pixel art are MIT licensed. The bundled Noto Sans SC font uses OFL; see `assets/font-license.txt`. ultralight-py and Ultralight/AppCore retain their own licenses.
+The project's MIT license does not replace the licenses of third-party components bundled with the game.
 Alpine.js 3.17.4 is vendored locally, so it adds no runtime network requirement; its MIT license is in `assets/vendor/alpine-LICENSE.txt`.
