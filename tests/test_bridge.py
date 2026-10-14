@@ -26,7 +26,7 @@ def test_explicit_api_surface_and_type_hints(tmp_path):
     controller.register_api(api)
     assert set(api.functions) == {'boot', 'new_run', 'move', 'whirl', 'cast_bolt', 'heal',
                                   'wait_turn', 'interact', 'choose_upgrade', 'set_paused',
-                                  'save_game', 'load_game'}
+                                  'save_game', 'load_game', 'set_language'}
     assert all(inspect.iscoroutinefunction(fn) for fn in api.functions.values())
     for fn in api.functions.values():
         signature = inspect.signature(fn)

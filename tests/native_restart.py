@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from game.bridge import Controller
 from game.engine import Game
+from game.i18n import localize_snapshot
 from game.storage import SaveStore
 from run import create_application
 from tests.player_bot import choose_action
@@ -26,7 +27,7 @@ def stable(snapshot):
 
 
 async def worker(mode, folder):
-    controller = Controller(SaveStore(folder))
+    controller = Controller(SaveStore(folder), language='en')
     app, window, api = create_application(controller, True, folder/'cache')
     task = asyncio.create_task(app.run_async())
     try:
@@ -49,7 +50,7 @@ async def worker(mode, folder):
             reference = Game()
             reference.restore(payload)
             expected = {'digest': digest(payload), 'loaded': stable(s),
-                        'next_turn': stable(reference.wait_turn())}
+                        'next_turn': stable(localize_snapshot(reference.wait_turn(), 'en'))}
             expected_path.write_text(json.dumps(expected, ensure_ascii=False), encoding='utf-8')
             print('NATIVE RESTART write', s['turn'], s['kills'], flush=True)
         else:

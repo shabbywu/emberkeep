@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent
 def create_application(controller, cpu=False, cache_path=None, width=1280, height=800):
     from ultralight_py import API, Application, Resource
     if version('ultralight-py') != '0.5.0':
-        raise RuntimeError('本游戏需要 ultralight-py==0.5.0，请重新安装 requirements.txt。')
+        raise RuntimeError('Requires ultralight-py==0.5.0. Reinstall requirements.txt.')
     resources = {}
     types = {'.js': 'text/javascript', '.woff2': 'font/woff2', '.png': 'image/png'}
     for path in (ROOT / 'assets').rglob('*'):
@@ -30,7 +30,7 @@ def create_application(controller, cpu=False, cache_path=None, width=1280, heigh
                           app_name='Emberkeep', developer_name='Emberkeep')
         # Game API registration lives in game.bridge.Controller.register_api().
         controller.register_api(api)
-        window = app.create_window(width, height, title='烬灯地牢 · EMBERKEEP')
+        window = app.create_window(width, height, title='Emberkeep / 烬灯地牢')
 
         @api.register
         async def quit_game():
@@ -75,6 +75,7 @@ async def smoke(controller, cpu, folder):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--lang', choices=('en', 'zh-CN'), help='Initial UI language (overrides remembered preference)')
     parser.add_argument('--cpu', action='store_true', help='Use CPU rendering (also supports pixel capture)')
     parser.add_argument('--seed', type=int, help='Fixed starting seed, 0..2147483647')
     parser.add_argument('--data-dir', type=Path, help='Save directory; default ~/.emberkeep')
@@ -84,11 +85,11 @@ def main():
         parser.error('--seed must be between 0 and 2147483647')
     if args.smoke:
         with tempfile.TemporaryDirectory(prefix='emberkeep-smoke-') as folder:
-            controller = Controller(SaveStore(folder), args.seed)
+            controller = Controller(SaveStore(folder), args.seed, args.lang)
             asyncio.run(smoke(controller, args.cpu, folder))
     else:
         store = SaveStore(args.data_dir)
-        controller = Controller(store, args.seed)
+        controller = Controller(store, args.seed, args.lang)
         app, _, api = create_application(controller, args.cpu, store.directory / 'cache')
         try:
             app.run()
@@ -101,4 +102,4 @@ if __name__ == '__main__':
     try:
         main()
     except ImportError as exc:
-        raise SystemExit(f'缺少运行依赖：{exc}\n请运行 python -m pip install -r requirements.txt') from exc
+        raise SystemExit(f'Missing dependency: {exc}\nRun python -m pip install -r requirements.txt') from exc

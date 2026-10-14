@@ -1,6 +1,8 @@
 """Connected room-and-corridor dungeons and small, deterministic grid helpers."""
 from collections import deque
 
+from .i18n import LocalizedError
+
 WIDTH, HEIGHT, FLOORS = 33, 25, 4
 DIRECTIONS = ((0, -1), (1, 0), (0, 1), (-1, 0))
 
@@ -67,7 +69,7 @@ def generate(rng):
         if len(rooms) == 7:
             break
     if len(rooms) < 2:
-        raise RuntimeError('无法生成地牢，请换一个种子。')
+        raise LocalizedError('error.generation')
     centers = [(x + w // 2, y + h // 2) for x, y, w, h in rooms]
     pairs = list(zip(centers, centers[1:]))
     if len(centers) > 3:

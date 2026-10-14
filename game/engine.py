@@ -4,28 +4,30 @@ import random
 import secrets
 from typing import Any
 
+from .i18n import LocalizedError, valid_message
+
 from .dungeon import (DIRECTIONS, FLOORS, HEIGHT, WIDTH, generate, line_of_sight,
                       next_step)
 
 ENEMIES = {
-    'slime': {'name': '苔沼软泥', 'hp': 8, 'attack': 3, 'armor': 0, 'xp': 2},
-    'skeleton': {'name': '白骨哨兵', 'hp': 12, 'attack': 4, 'armor': 1, 'xp': 3},
-    'cultist': {'name': '灰烬术士', 'hp': 10, 'attack': 4, 'armor': 0, 'xp': 3},
-    'warden': {'name': '无灯守墓者', 'hp': 56, 'attack': 7, 'armor': 1, 'xp': 12},
+    'slime': {'hp': 8, 'attack': 3, 'armor': 0, 'xp': 2},
+    'skeleton': {'hp': 12, 'attack': 4, 'armor': 1, 'xp': 3},
+    'cultist': {'hp': 10, 'attack': 4, 'armor': 0, 'xp': 3},
+    'warden': {'hp': 56, 'attack': 7, 'armor': 1, 'xp': 12},
 }
 UPGRADES = {
-    'edge': {'name': '磨砺之刃', 'desc': '近战与旋风斩伤害 +2', 'tag': '锋刃', 'icon': 'sword'},
-    'heart': {'name': '余烬之心', 'desc': '生命上限 +8，恢复 14 生命', 'tag': '生命', 'icon': 'heart'},
-    'plate': {'name': '旧王的护甲', 'desc': '护甲 +1，最低仍受到 1 点伤害', 'tag': '防御', 'icon': 'shield'},
-    'flame': {'name': '灼热契约', 'desc': '余烬弹伤害 +3', 'tag': '法术', 'icon': 'bolt'},
-    'haste': {'name': '疾风符文', 'desc': '两种技能冷却 -1，最低 2 回合', 'tag': '冷却', 'icon': 'whirl'},
-    'supply': {'name': '旅人的行囊', 'desc': '获得 2 瓶药水，恢复 6 生命', 'tag': '补给', 'icon': 'potion'},
-    'siphon': {'name': '不灭灯芯', 'desc': '每次击杀恢复 2 生命', 'tag': '续航', 'icon': 'torch'},
-    'sight': {'name': '守夜人的灯', 'desc': '视野 +1，生命上限 +4', 'tag': '探索', 'icon': 'torch'},
+    'edge': {'icon': 'sword'},
+    'heart': {'icon': 'heart'},
+    'plate': {'icon': 'shield'},
+    'flame': {'icon': 'bolt'},
+    'haste': {'icon': 'whirl'},
+    'supply': {'icon': 'potion'},
+    'siphon': {'icon': 'torch'},
+    'sight': {'icon': 'torch'},
 }
 Snapshot = dict[str, Any]
 
-FLOOR_NAMES = ['遗忘的门廊', '潮湿回廊', '灰烬圣所', '无灯王座']
+FLOOR_KEYS = ['floor.' + str(i) for i in range(1, FLOORS + 1)]
 
 
 def tuples(value):
@@ -42,8 +44,8 @@ class Game:
     def _event(self, kind, **data):
         self.events.append({'kind': kind, **data})
 
-    def _say(self, text):
-        self.state['messages'] = (self.state['messages'] + [text])[-8:]
+    def _say(self, key: str, **params: Any) -> None:
+        self.state['messages'] = (self.state['messages'] + [{'key': key, 'params': params}])[-8:]
 
     def _begin(self):
         self.events = []
@@ -57,7 +59,7 @@ class Game:
         if seed is None:
             seed = secrets.randbelow(2**31)
         if type(seed) is not int or not 0 <= seed < 2**31:
-            raise ValueError('种子必须是 0 到 2147483647 之间的整数。')
+            raise LocalizedError('error.seed')
         self.rng = random.Random(seed)
         self._begin()
         self.state = {
@@ -71,7 +73,7 @@ class Game:
             'messages': [], 'upgrades': [], 'enemies': [], 'items': [], 'seen': [],
         }
         self._floor()
-        self._say('灯火尚未熄灭。找到楼梯，深入无灯王座。')
+        self._say('log.start')
         self.revision += 1
         return self.snapshot()
 
@@ -103,7 +105,7 @@ class Game:
             x, y = cells.pop()
             s['items'].append({'x': x, 'y': y, 'kind': 'potion' if i % 3 == 0 else 'chest'})
         self._reveal()
-        self._say(f'第 {s["floor"]} 层 · {FLOOR_NAMES[s["floor"] - 1]}')
+        self._say('log.floor', floor=s['floor'], name='floor.' + str(s['floor']))
         self._event('floor', floor=s['floor'])
 
     def _spawn(self, kind, x, y):
@@ -141,7 +143,7 @@ class Game:
         p['whirl_remaining'] = max(0, p['whirl_ready'] - s['turn'])
         p['bolt_remaining'] = max(0, p['bolt_ready'] - s['turn'])
         return {'phase': s['phase'], 'paused': s['paused'], 'floor': s['floor'],
-                'floor_name': FLOOR_NAMES[s['floor']-1], 'floors': FLOORS,
+                'floor_name': FLOOR_KEYS[s['floor']-1], 'floors': FLOORS,
                 'seed': s['seed'], 'turn': s['turn'], 'kills': s['kills'], 'gold': s['gold'],
                 'score': self.score(), 'width': WIDTH, 'height': HEIGHT,
                 'rows': [''.join(c if y*WIDTH+x in seen else ' ' for x, c in enumerate(row))
@@ -153,7 +155,7 @@ class Game:
                              if tuple(tile) in visible],
                 'exit': list(s['exit']) if s['exit'][1]*WIDTH+s['exit'][0] in seen else None,
                 'upgrades': [{'id': key, **UPGRADES[key]} for key in s['upgrades']],
-                'messages': list(s['messages']), 'events': deepcopy(self.events),
+                'messages': deepcopy(s['messages']), 'events': deepcopy(self.events),
                 'revision': self.revision}
 
     def score(self) -> int:
@@ -178,20 +180,20 @@ class Game:
             p['xp'] += enemy['xp']
             p['hp'] = min(p['max_hp'], p['hp'] + p['siphon'])
             self._event('death', x=enemy['x'], y=enemy['y'], enemy=enemy['kind'])
-            self._say(f'{enemy["name"]}倒下了。+{enemy["xp"]} 经验')
+            self._say('log.kill', enemy='enemy.' + enemy['kind'], xp=enemy['xp'])
             if enemy['kind'] == 'warden':
-                self._say('守墓者已倒下！走向金色楼梯，重见晨光。')
+                self._say('log.boss_down')
 
     def _hurt(self, amount, attacker):
         p = self.state['player']
         damage = max(1, amount - p['armor'])
         p['hp'] = max(0, p['hp'] - damage)
         self._event('hurt', x=p['x'], y=p['y'], amount=damage)
-        self._say(f'{attacker}造成 {damage} 点伤害。')
+        self._say('log.hurt', enemy='enemy.' + attacker, damage=damage)
         if not p['hp']:
             self.state['phase'] = 'dead'
             self.state['paused'] = False
-            self._say('最后一缕灯火，消散在地牢深处。')
+            self._say('log.death')
 
     def _pickup(self):
         s, p = self.state, self.state['player']
@@ -201,12 +203,12 @@ class Game:
             s['items'].remove(item)
             if item['kind'] == 'potion':
                 p['potions'] += 1
-                self._say('找到一瓶治疗药水。按 R 使用。')
+                self._say('log.potion')
             else:
                 gold = self.rng.randint(5, 12)
                 s['gold'] += gold
                 p['xp'] += 2
-                self._say(f'打开旧宝箱：+{gold} 金币，+2 经验。')
+                self._say('log.chest', gold=gold)
             self._event('pickup', x=p['x'], y=p['y'], item=item['kind'])
 
     def _upgrade_check(self):
@@ -214,17 +216,17 @@ class Game:
         if s['phase'] == 'playing' and p['xp'] >= p['xp_next']:
             s['phase'] = 'upgrade'
             s['upgrades'] = self.rng.sample(list(UPGRADES), 3)
-            self._say('灯火回应了你的勇气。选择一份馈赠。')
+            self._say('log.upgrade')
 
     def choose_upgrade(self, key: str) -> Snapshot:
         self._begin()
         s = self.state
         if not s or s['phase'] != 'upgrade':
-            raise ValueError('当前没有待选择的升级。')
+            raise LocalizedError('error.no_upgrade')
         if s['paused']:
-            raise ValueError('请先继续冒险，再选择强化。')
+            raise LocalizedError('error.paused_upgrade')
         if key not in s['upgrades']:
-            raise ValueError('请选择当前提供的强化。')
+            raise LocalizedError('error.upgrade')
         p = s['player']
         p['xp'] -= p['xp_next']
         p['level'] += 1
@@ -249,7 +251,7 @@ class Game:
         # A little recovery makes each level-up feel good regardless of its option.
         p['hp'] = min(p['max_hp'], p['hp']+4)
         s['phase'], s['upgrades'] = 'playing', []
-        self._say(f'等级 {p["level"]} · 获得{UPGRADES[key]["name"]}')
+        self._say('log.level', level=p['level'], upgrade='upgrade.' + key + '.name')
         self._event('upgrade', upgrade=key)
         self._upgrade_check()
         self._reveal()
@@ -257,7 +259,7 @@ class Game:
 
     def pause(self, value: bool) -> Snapshot:
         if type(value) is not bool:
-            raise ValueError('暂停参数必须是布尔值。')
+            raise LocalizedError('error.pause')
         self._begin()
         if self.state and self.state['phase'] in ('playing', 'upgrade'):
             self.state['paused'] = value
@@ -279,7 +281,7 @@ class Game:
     def move(self, direction: str) -> Snapshot:
         moves = {'up': (0, -1), 'right': (1, 0), 'down': (0, 1), 'left': (-1, 0)}
         if not isinstance(direction, str) or direction not in moves:
-            raise ValueError('移动方向必须是 up、right、down 或 left。')
+            raise LocalizedError('error.direction')
         if not self._start_turn():
             return self._end()
         s, p = self.state, self.state['player']
@@ -287,7 +289,7 @@ class Game:
         dx, dy = moves[direction]
         target = origin[0]+dx, origin[1]+dy
         if not (0 <= target[0] < WIDTH and 0 <= target[1] < HEIGHT) or s['rows'][target[1]][target[0]] == '#':
-            self._say('石墙挡住了去路。')
+            self._say('log.wall')
             self._event('bump', x=p['x'], y=p['y'])
             return self._end()
         enemy = self._enemy(*target)
@@ -305,7 +307,7 @@ class Game:
         s, p = self.state, self.state['player']
         victims = [e for e in s['enemies'] if abs(e['x']-p['x'])+abs(e['y']-p['y']) == 1]
         if p['whirl_ready'] > s['turn'] or not victims:
-            self._say('旋风斩尚未就绪。' if p['whirl_ready'] > s['turn'] else '身旁没有敌人。')
+            self._say('log.whirl_wait' if p['whirl_ready'] > s['turn'] else 'log.no_adjacent')
             return self._end()
         for enemy in victims:
             self._damage_enemy(enemy, p['attack']+4)
@@ -318,10 +320,10 @@ class Game:
             return self._end()
         if x is not None or y is not None:
             if type(x) is not int or type(y) is not int or not (0 <= x < WIDTH and 0 <= y < HEIGHT):
-                raise ValueError('无效的法术目标坐标。')
+                raise LocalizedError('error.target')
         s, p = self.state, self.state['player']
         if p['bolt_ready'] > s['turn']:
-            self._say('余烬弹尚未就绪。')
+            self._say('log.bolt_wait')
             return self._end()
         origin = p['x'], p['y']
         targets = [e for e in s['enemies'] if (e['x'], e['y']) in self.visible()
@@ -330,7 +332,7 @@ class Game:
         if x is not None or y is not None:
             targets = [e for e in targets if (e['x'], e['y']) == (x, y)]
         if not targets:
-            self._say('射程 4 格内没有可见的敌人。')
+            self._say('log.no_target')
             return self._end()
         enemy = min(targets, key=lambda e: (abs(e['x']-p['x'])+abs(e['y']-p['y']), e['id']))
         self._event('bolt', x=p['x'], y=p['y'], tx=enemy['x'], ty=enemy['y'])
@@ -343,13 +345,13 @@ class Game:
             return self._end()
         p = self.state['player']
         if not p['potions'] or p['hp'] == p['max_hp']:
-            self._say('没有药水了。' if not p['potions'] else '生命已经充盈。')
+            self._say('log.no_potion' if not p['potions'] else 'log.full_hp')
             return self._end()
         amount = min(18, p['max_hp']-p['hp'])
         p['potions'] -= 1
         p['hp'] += amount
         self._event('heal', x=p['x'], y=p['y'], amount=amount)
-        self._say(f'喝下药水，恢复 {amount} 点生命。')
+        self._say('log.heal', amount=amount)
         return self._finish_turn()
 
     def wait_turn(self) -> Snapshot:
@@ -361,9 +363,9 @@ class Game:
         if not self._start_turn():
             return self._end()
         if type(x) is not int or type(y) is not int or not (0 <= x < WIDTH and 0 <= y < HEIGHT):
-            raise ValueError('无效的地图坐标。')
+            raise LocalizedError('error.coordinates')
         if (x, y) not in self.visible():
-            self._say('灯光照不到那里。')
+            self._say('log.unseen')
             return self._end()
         p = self.state['player']
         delta = x-p['x'], y-p['y']
@@ -374,7 +376,7 @@ class Game:
             return self.cast_bolt(x, y)
         if delta == (0, 0):
             return self.wait_turn()
-        self._say('点击相邻地面移动；点击远处敌人施放余烬弹。')
+        self._say('log.mouse')
         return self._end()
 
     def _finish_turn(self) -> Snapshot:
@@ -391,10 +393,10 @@ class Game:
                 return self._end(True)
             if not any(e['kind'] == 'warden' for e in s['enemies']):
                 s['phase'] = 'won'
-                self._say('地牢门外，晨光正好。你的灯火归来了。')
+                self._say('log.victory')
                 self._event('win')
                 return self._end(True)
-            self._say('出口被封印。先击败无灯守墓者！')
+            self._say('log.locked')
         self._enemy_turn()
         self._reveal()
         self._upgrade_check()
@@ -417,7 +419,7 @@ class Game:
                 enemy['intent'] = []
                 self._event('enemy_spell', tiles=tiles, enemy=enemy['kind'])
                 if list(b) in tiles:
-                    self._hurt(enemy['attack'] + (2 if enemy['rage'] else 0), enemy['name'])
+                    self._hurt(enemy['attack'] + (2 if enemy['rage'] else 0), enemy['kind'])
                 continue
             if not enemy['awake'] or distance > 10:
                 continue
@@ -428,7 +430,7 @@ class Game:
                 rage = enemy['hp'] <= enemy['max_hp']//2
                 if rage and not enemy['rage']:
                     enemy['rage'] = True
-                    self._say('守墓者震碎了面具。留心脚下的红色预警！')
+                    self._say('log.rage')
                     self._event('rage', x=a[0], y=a[1])
                 period = 2 if rage else 3
                 if sight and s['turn'] % period == 0:
@@ -443,7 +445,7 @@ class Game:
                                        and 0 < (b[1]+d if vertical else b[1]) < HEIGHT-1
                                        and s['rows'][b[1]+d if vertical else b[1]][b[0] if vertical else b[0]+d] != '#']
                     self._event('warn', tiles=enemy['intent'])
-                    self._say('守墓者正在蓄力！下一回合离开红色区域。')
+                    self._say('log.warning')
                     continue
             if kind == 'cultist' and sight and 2 <= distance <= 4:
                 enemy['intent'] = [list(b)]
@@ -451,7 +453,7 @@ class Game:
                 continue
             if distance == 1 and kind != 'cultist':
                 self._event('enemy_melee', x=a[0], y=a[1], tx=b[0], ty=b[1])
-                self._hurt(enemy['attack'], enemy['name'])
+                self._hurt(enemy['attack'], enemy['kind'])
                 continue
             blocked = occupied - {a}
             if kind == 'cultist' and distance < 3:
@@ -460,7 +462,7 @@ class Game:
                               and s['rows'][c[1]][c[0]] != '#' and c not in blocked and c != b]
                 target = max(candidates, key=lambda c: abs(c[0]-b[0])+abs(c[1]-b[1]), default=None)
                 if not target and distance == 1:
-                    self._hurt(enemy['attack'], enemy['name'])
+                    self._hurt(enemy['attack'], enemy['kind'])
             else:
                 target = next_step(s['rows'], a, b, blocked)
             if target and target != b:
@@ -471,16 +473,16 @@ class Game:
 
     def export(self) -> dict[str, Any]:
         if not self.state:
-            raise ValueError('还没有进行中的冒险。')
+            raise LocalizedError('error.no_run')
         return {'format_version': 1, 'state': deepcopy(self.state), 'rng': self.rng.getstate()}
 
     def restore(self, payload: dict[str, Any]) -> Snapshot:
         # Validate before committing: a bad file cannot replace the active run.
         if not isinstance(payload, dict) or payload.get('format_version') != 1:
-            raise ValueError('不支持的存档版本。')
+            raise LocalizedError('error.version')
         def require(condition):
             if not condition:
-                raise ValueError("invalid save")
+                raise LocalizedError('error.corrupt')
         try:
             s = deepcopy(payload['state'])
             rng = random.Random()
@@ -520,7 +522,11 @@ class Game:
                 require(0 <= item['x'] < WIDTH and 0 <= item['y'] < HEIGHT)
                 require(s['rows'][item['y']][item['x']] != '#')
             require(all(type(i) is int and 0 <= i < WIDTH*HEIGHT for i in s['seen']))
-            require(all(isinstance(message, str) for message in s['messages']))
+            require(all(isinstance(message, str) or valid_message(message) for message in s['messages']))
+            if any(isinstance(message, str) for message in s['messages']):
+                s['messages'] = [{'key': 'log.continued', 'params': {}}]
+            for enemy in s['enemies']:
+                enemy.pop('name', None)
             require(all(key in UPGRADES for key in s['upgrades']))
             require(s['phase'] != 'upgrade' or len(s['upgrades']) == 3)
             require(s['phase'] != 'dead' or p['hp'] == 0)
@@ -528,7 +534,7 @@ class Game:
             for key in ('kills', 'gold'):
                 require(type(s[key]) is int and s[key] >= 0)
         except (KeyError, TypeError, IndexError, ValueError, AssertionError) as exc:
-            raise ValueError('存档内容损坏，原文件已保留。') from exc
+            raise LocalizedError('error.corrupt') from exc
         s['paused'] = False
         self.state, self.rng = s, rng
         self.events = []

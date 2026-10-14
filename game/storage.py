@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import tempfile
 
+from .i18n import LocalizedError
+
 
 class SaveStore:
     def __init__(self, directory=None):
@@ -34,12 +36,12 @@ class SaveStore:
     async def load(self):
         def read():
             if self.path.stat().st_size > 2_000_000:
-                raise ValueError('存档文件过大，原文件已保留。')
+                raise LocalizedError('error.large')
             with self.path.open(encoding='utf-8') as stream:
                 return json.load(stream)
         try:
             return await asyncio.to_thread(read)
         except FileNotFoundError as exc:
-            raise ValueError('没有找到存档，请开始新的冒险。') from exc
+            raise LocalizedError('error.missing') from exc
         except (json.JSONDecodeError, UnicodeError) as exc:
-            raise ValueError('存档内容损坏，原文件已保留。') from exc
+            raise LocalizedError('error.corrupt') from exc

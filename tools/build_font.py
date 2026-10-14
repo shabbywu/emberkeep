@@ -16,7 +16,7 @@ def main():
     characters.update('×−→↗·Ⅱ✦！？，。；：、（）【】「」《》…—灯火地牢旅人守墓者')
     for folder in (ROOT/'game', ROOT/'assets'):
         for path in folder.rglob('*'):
-            if path.suffix in ('.py', '.html', '.js', '.css'):
+            if path.suffix in ('.py', '.html', '.js', '.css', '.json'):
                 characters.update(path.read_text(encoding='utf-8'))
     characters.update((ROOT/'run.py').read_text(encoding='utf-8'))
     font = TTFont(args.source)

@@ -14,6 +14,9 @@ interface HeroProxy {
 // Python containers are live proxies. Copy them with Python.to_value() before rendering.
 interface PythonSnapshotProxy { readonly __pythonSnapshot?: never; }
 interface Snapshot {
+  language: 'en' | 'zh-CN';
+  catalog?: Record<string, string>;
+  language_override?: boolean;
   phase: Phase;
   paused?: boolean;
   floor?: number;
@@ -51,6 +54,7 @@ interface HostAPI extends Commands {
   boot(): Promise<PythonSnapshotProxy>;
   new_run(seed?: number | null): Promise<PythonSnapshotProxy>;
   choose_upgrade(id: string): Promise<PythonSnapshotProxy>;
+  set_language(language: 'en' | 'zh-CN'): Promise<PythonSnapshotProxy>;
   set_paused(value: boolean): Promise<PythonSnapshotProxy>;
   save_game(): Promise<PythonSnapshotProxy>;
   load_game(): Promise<PythonSnapshotProxy>;

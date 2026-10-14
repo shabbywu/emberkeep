@@ -1,6 +1,22 @@
 /* Presentation only. Python decides movement, AI, combat, targeting, growth and saves. */
 (() => {
   'use strict';
+  let language='en', translations={};
+  function t(key,params={}){
+    return (translations[key]||key).replace(/\{(\w+)\}/g,(_,name)=>String(params[name]??'{'+name+'}'));
+  }
+  function applyLanguage(next){
+    if(!next.catalog)return;
+    translations=next.catalog;language=next.language;
+    document.documentElement.lang=language;
+    document.querySelectorAll('[data-i18n]').forEach(node=>{
+      // Catalogs contain a few typographic HTML entities, never user markup.
+      node.textContent=t(node.dataset.i18n).replace(/&nbsp;/g,'\u00a0');
+    });
+    for(const attr of ['title','aria-label'])document.querySelectorAll('[data-i18n-'+attr+']').forEach(node=>node.setAttribute(attr,t(node.getAttribute('data-i18n-'+attr))));
+    $('languageEn').setAttribute('aria-pressed',String(language==='en'));
+    $('languageZh').setAttribute('aria-pressed',String(language==='zh-CN'));
+  }
   const $ = id => document.getElementById(id);
   const canvas=$('board'), ctx=canvas.getContext('2d'), app=$('app'), card=$('card');
   const T=16, COLS=23, ROWS=17, CW=COLS*T, CH=ROWS*T;
@@ -23,11 +39,11 @@
 
   async function invoke(name,args=[]){
     if(busy)return;
-    busy=true;app.classList.add('busy');text('saveStatus',name==='load_game'?'读取灯火…':'灯火流转…');
+    busy=true;$('languageEn').disabled=true;$('languageZh').disabled=true;app.classList.add('busy');text('saveStatus',name==='load_game'?t('ui.loading'):t('ui.working'));
     const started=performance.now();
     try{
       const fn=window.host?(name.startsWith('game.')?host.game[name.slice(5)]:host[name]):null;
-      if(typeof fn!=='function')throw new Error('请使用 python run.py 打开原生游戏窗口。');
+      if(typeof fn!=='function')throw new Error(t('ui.native_required'));
       // Returned dict/list values are live Python proxies, not JS containers.
       const next=Python.to_value(await fn(...args));
       calls++;ms=performance.now()-started;
@@ -38,18 +54,19 @@
         error='';$('error').classList.add('hidden');setState(next);
         if(noTurn&&changedMessage)toast(message);
       }
-      if(name==='save_game')toast('冒险已保存。灯火会记住你的脚步。');
+      if(name==='save_game')toast(t('ui.saved_toast'));
       return next;
     }catch(err){showError(err);return null}
     finally{
-      busy=false;app.classList.remove('busy');
-      if(state.phase!=='menu')text('saveStatus',state.saved?'灯火已存':'尚未保存');
-      else text('saveStatus','灯火待燃');
+      busy=false;$('languageEn').disabled=false;$('languageZh').disabled=false;app.classList.remove('busy');
+      if(state.phase!=='menu')text('saveStatus',state.saved?t('ui.saved'):t('ui.unsaved'));
+      else text('saveStatus',t('ui.idle'));
       if(pauseRequested){pauseRequested=false;if(state.player&&!state.paused&&['playing','upgrade'].includes(state.phase))invoke('set_paused',[true]);}
     }
   }
 
   function setState(next){
+    applyLanguage(next);
     const previous=state;
     state=next;app.dataset.phase=state.phase;
     visible=new Set(state.visible||[]);
@@ -91,10 +108,10 @@
     $('hpFill').style.width=(100*hero.hp/hero.max_hp)+'%';
     text('attackText',hero.attack);text('armorText',hero.armor);text('potionCount','×'+hero.potions);
     text('xpText',p.xp+' / '+p.xp_next);$('xpFill').style.width=Math.min(100,100*p.xp/p.xp_next)+'%';
-    text('floorName','第 '+state.floor+' 层 / '+state.floors+' · '+state.floor_name);
-    text('turnCount','第 '+state.turn+' 回合');text('seedLabel','SEED '+state.seed);
-    text('whirlCd',p.whirl_remaining?p.whirl_remaining+' 回合':'就绪');
-    text('boltCd',p.bolt_remaining?p.bolt_remaining+' 回合':'就绪');
+    text('floorName',t('ui.floor',{floor:state.floor,floors:state.floors,name:state.floor_name}));
+    text('turnCount',t('ui.turn',{turn:state.turn}));text('seedLabel','SEED '+state.seed);
+    text('whirlCd',p.whirl_remaining?t('ui.cooldown',{turns:p.whirl_remaining}):t('ui.ready'));
+    text('boltCd',p.bolt_remaining?t('ui.cooldown',{turns:p.bolt_remaining}):t('ui.ready'));
     $('whirlBtn').classList.toggle('cooldown',p.whirl_remaining>0);
     $('boltBtn').classList.toggle('cooldown',p.bolt_remaining>0);
     text('killsText',state.kills);text('goldText',state.gold);
@@ -104,42 +121,45 @@
     log.scrollTop=log.scrollHeight;
     const boss=(state.enemies||[]).find(e=>e.kind==='warden');
     $('bossHud').classList.toggle('hidden',!boss||state.phase!=='playing');
-    if(boss){$('bossFill').style.width=(100*boss.hp/boss.max_hp)+'%';text('bossPhase',boss.rage?'面具碎裂 · 第二阶段':'沉眠的旧王');}
+    if(boss){$('bossFill').style.width=(100*boss.hp/boss.max_hp)+'%';text('bossPhase',boss.rage?t('ui.boss_rage'):t('ui.boss_calm'));}
   }
 
   function dialog(className=''){$('overlay').classList.remove('hidden');card.className='dialog '+className;}
   function showMenu(){
     dialog('menu-card');
-    card.innerHTML='<div class="menu-story"><div class="overline">THE LAST LIGHT IN THE DARK</div><h1>烬灯<br>地牢</h1><div class="english-title">EMBERKEEP</div><p>长夜之下，石门再一次打开。<br>握紧你的灯，带着晨光归来。</p><div class="menu-rune"><i></i>四层长夜 · 一次归途<i></i></div></div>'+
-      '<div class="menu-actions"><div class="overline">点燃下一段冒险</div><div class="button-stack"><button id="startBtn" class="primary">点燃烬灯 &nbsp; ↗</button><button id="continueBtn" class="secondary" '+(!state.has_save?'disabled':'')+'>继续冒险</button></div><label class="seed-input">地牢种子 <input id="seedInput" type="text" inputmode="numeric" placeholder="随机" maxlength="10" aria-label="地牢随机种子"></label><button id="guideBtn" class="text-button">初次守灯？查看旅人手册</button><div class="menu-divider"></div><div class="menu-badge">FOUR FLOORS · ONE FLAME</div><p class="under-note">回合制冒险 · 随时保存<br>死亡之后，新的灯火仍会燃起。</p><button id="quitBtn" class="text-button">退出游戏</button></div>';
-    $('startBtn').onclick=()=>{const value=$('seedInput').value.trim();if(value&&!/^\d+$/.test(value)){showError('种子必须是 0 到 2147483647 之间的整数。');return}invoke('new_run',[value?Number(value):null]);};
+    card.innerHTML='<div class="menu-story"><div class="overline">THE LAST LIGHT IN THE DARK</div><h1>'+t('ui.menu_title_top')+'<br>'+t('ui.menu_title_bottom')+'</h1><div class="english-title">EMBERKEEP</div><p>'+t('ui.menu_story_one')+'<br>'+t('ui.menu_story_two')+'</p><div class="menu-rune"><i></i>'+t('ui.menu_motto')+'<i></i></div></div>'+
+      '<div class="menu-actions"><div class="overline">'+t('ui.menu_start_caption')+'</div><div class="button-stack"><button id="startBtn" class="primary">'+t('ui.start')+'</button><button id="continueBtn" class="secondary" '+(!state.has_save?'disabled':'')+'>'+t('ui.continue')+'</button></div><label class="seed-input">'+t('ui.seed')+'<input id="seedInput" type="text" inputmode="numeric" placeholder="'+t('ui.random')+'" maxlength="10" aria-label="'+t('ui.seed_label')+'"></label><button id="guideBtn" class="text-button">'+t('ui.menu_guide')+'</button><div class="menu-divider"></div><div class="menu-badge">FOUR FLOORS · ONE FLAME</div><p class="under-note">'+t('ui.menu_note')+'<br>'+t('ui.menu_death_note')+'</p><button id="quitBtn" class="text-button">'+t('ui.quit')+'</button></div>';
+    $('startBtn').onclick=()=>{const value=$('seedInput').value.trim();if(value&&!/^\d+$/.test(value)){showError(t('error.seed'));return}invoke('new_run',[value?Number(value):null]);};
     $('continueBtn').onclick=()=>invoke('load_game');$('guideBtn').onclick=showHelp;
     $('quitBtn').onclick=()=>{if(!busy)host.quit_game().catch(showError)};
     $('startBtn').focus();
   }
   function showUpgrades(){
     dialog();
-    card.innerHTML='<div class="overline">A GIFT FROM THE EMBERS</div><h1>灯火的馈赠</h1><p class="description">等级 '+state.player.level+' → '+(state.player.level+1)+'<br>选择一份强化，让归途再亮一些。</p><div class="upgrade-grid">'+state.upgrades.map((u,i)=>'<button class="upgrade-card" id="choice'+i+'" data-upgrade="'+u.id+'"><span class="choice-number">0'+(i+1)+'</span>'+icon(u.icon)+'<small>'+u.tag+'</small><strong>'+u.name+'</strong><p>'+u.desc+'</p><kbd>'+(i+1)+'</kbd></button>').join('')+'</div><div class="under-note">按 1 / 2 / 3 选择 · 选择期间时间静止</div>';
+    card.innerHTML='<div class="overline">A GIFT FROM THE EMBERS</div><h1>'+t('ui.upgrade_title')+'</h1><p class="description">'+t('ui.level')+state.player.level+' → '+(state.player.level+1)+'<br>'+t('ui.upgrade_note')+'</p><div class="upgrade-grid">'+state.upgrades.map((u,i)=>'<button class="upgrade-card" id="choice'+i+'" data-upgrade="'+u.id+'"><span class="choice-number">0'+(i+1)+'</span>'+icon(u.icon)+'<small>'+u.tag+'</small><strong>'+u.name+'</strong><p>'+u.desc+'</p><kbd>'+(i+1)+'</kbd></button>').join('')+'</div><div class="under-note">'+t('ui.upgrade_keys')+'</div>';
     card.querySelectorAll('[data-upgrade]').forEach(node=>node.onclick=()=>invoke('choose_upgrade',[node.dataset.upgrade]));
     $('choice0').focus();
   }
   function showPause(){
-    dialog();card.innerHTML='<div class="overline">KEEP THE FLAME ALIVE</div><h1>在灯下歇息</h1><p class="description">地牢暂时安静了。<br>你的每一步，都已交给灯火保管。</p><div class="button-stack"><button id="resumeBtn" class="primary">继续前行 &nbsp; ↗</button><button id="saveMenuBtn" class="secondary">保存并返回主菜单</button><button id="pauseGuideBtn" class="text-button">旅人手册</button></div><div class="under-note">Esc 继续 · F5 保存</div>';
+    dialog();card.innerHTML='<div class="overline">KEEP THE FLAME ALIVE</div><h1>'+t('ui.pause_title')+'</h1><p class="description">'+t('ui.pause_note')+'<br>'+t('ui.pause_saved')+'</p><div class="button-stack"><button id="resumeBtn" class="primary">'+t('ui.resume')+'</button><button id="saveMenuBtn" class="secondary">'+t('ui.save_menu')+'</button><button id="pauseGuideBtn" class="text-button">'+t('ui.guide')+'</button></div><div class="under-note">'+t('ui.pause_keys')+'</div>';
     $('resumeBtn').onclick=()=>invoke('set_paused',[false]);
     $('saveMenuBtn').onclick=async()=>{const saved=await invoke('save_game');if(saved)await invoke('boot');};
     $('pauseGuideBtn').onclick=showHelp;$('resumeBtn').focus();
   }
   function showEnding(){
     dialog();const won=state.phase==='won';
-    card.innerHTML='<div class="overline">'+(won?'THE DAWN REMEMBERS YOU':'ANOTHER FLAME, ANOTHER NIGHT')+'</div>'+icon(won?'lamp':'skull','result-emblem')+'<h1>'+(won?'带着晨光归来':'灯火终有余烬')+'</h1><p class="description">'+(won?'无灯守墓者已沉眠，石门之外是黎明。':'旅人的足迹，仍留在漫长的地牢里。')+'</p><div class="result-grid"><span>旅途评分<strong>'+state.score+'</strong></span><span>抵达楼层<strong>'+state.floor+' / 4</strong></span><span>击败敌人<strong>'+state.kills+'</strong></span><span>历经回合<strong>'+state.turn+'</strong></span></div><p class="result-message">等级 '+state.player.level+' · 金币 '+state.gold+' · 种子 '+state.seed+'</p><div class="button-stack"><button id="restartBtn" class="primary">再点一盏灯 &nbsp; ↗</button><button id="endingMenuBtn" class="secondary">回到主菜单</button></div>';
+    card.innerHTML='<div class="overline">'+(won?'THE DAWN REMEMBERS YOU':'ANOTHER FLAME, ANOTHER NIGHT')+'</div>'+icon(won?'lamp':'skull','result-emblem')+'<h1>'+(won?t('ui.win_title'):t('ui.lose_title'))+'</h1><p class="description">'+(won?t('ui.win_note'):t('ui.lose_note'))+'</p><div class="result-grid"><span>'+t('ui.score')+'<strong>'+state.score+'</strong></span><span>'+t('ui.floor_reached')+'<strong>'+state.floor+' / 4</strong></span><span>'+t('ui.kills')+'<strong>'+state.kills+'</strong></span><span>'+t('ui.turns')+'<strong>'+state.turn+'</strong></span></div><p class="result-message">'+t('ui.level')+state.player.level+t('ui.gold_prefix')+state.gold+t('ui.seed_prefix')+state.seed+'</p><div class="button-stack"><button id="restartBtn" class="primary">'+t('ui.restart')+'</button><button id="endingMenuBtn" class="secondary">'+t('ui.main_menu')+'</button></div>';
     $('restartBtn').onclick=()=>invoke('new_run');$('endingMenuBtn').onclick=()=>invoke('boot');$('restartBtn').focus();
   }
   async function showHelp(){
     if(busy)return;
     helpWasPaused=!!state.paused;
     if(state.player&&['playing','upgrade'].includes(state.phase)&&!state.paused)await invoke('set_paused',[true]);
+    renderHelp();
+  }
+  function renderHelp(){
     helpOpen=true;dialog();
-    card.innerHTML='<div class="overline">THE WAY OF THE LANTERN</div><h1>旅人手册</h1><p class="description">先观察，再行动。只有有效的行动才会推进时间。</p><div class="guide-grid"><div><b>走向地牢</b><br><kbd>WASD</kbd>或方向键移动，撞敌近战。<br>点击相邻地面移动；点击远处敌人施法。</div><div><b>让灯火成为武器</b><br><kbd>Q</kbd>旋风斩：横扫四邻格。<br><kbd>E</kbd>余烬弹：攻击最近的有效目标。</div><div><b>活着归来</b><br><kbd>R</kbd>药水：恢复 18 点生命。<br><kbd>Space</kbd>等待；敌人也会行动。</div><div><b>记住你的旅途</b><br><kbd>Esc</kbd>暂停；<kbd>F5</kbd>异步保存。<br>失焦会暂停。菜单可以继续已存的冒险。</div><div><b>辨认敌人的脚步</b><br>软泥隔回合行动；白骨持续追击；<br>术士保持距离，蓄力后攻击标记地格。</div><div><b>地牢的尽头</b><br>击杀和宝箱给予经验，升级随机三选一。<br>走下楼梯，击败第四层守墓者并抵达出口。</div></div><p class="description">红色预警将在下一回合触发。换一个地格，便是一条生路。</p><div class="button-stack"><button id="closeGuideBtn" class="primary">记住了，握紧灯火</button></div>';
+    card.innerHTML='<div class="overline">THE WAY OF THE LANTERN</div><h1>'+t('ui.guide')+'</h1><p class="description">'+t('ui.guide_intro')+'</p><div class="guide-grid"><div><b>'+t('ui.guide_move_title')+'</b><br><kbd>WASD</kbd>'+t('ui.guide_move_keys')+'<br>'+t('ui.guide_mouse')+'</div><div><b>'+t('ui.guide_skill_title')+'</b><br><kbd>Q</kbd>'+t('ui.guide_whirl')+'<br><kbd>E</kbd>'+t('ui.guide_bolt')+'</div><div><b>'+t('ui.guide_survive_title')+'</b><br><kbd>R</kbd>'+t('ui.guide_heal')+'<br><kbd>Space</kbd>'+t('ui.guide_wait')+'</div><div><b>'+t('ui.guide_save_title')+'</b><br><kbd>Esc</kbd>'+t('ui.guide_pause')+'<kbd>F5</kbd>'+t('ui.guide_save')+'<br>'+t('ui.guide_focus')+'</div><div><b>'+t('ui.guide_enemy_title')+'</b><br>'+t('ui.guide_enemy_one')+'<br>'+t('ui.guide_enemy_two')+'</div><div><b>'+t('ui.guide_goal_title')+'</b><br>'+t('ui.guide_growth')+'<br>'+t('ui.guide_goal')+'</div></div><p class="description">'+t('ui.guide_warning')+'</p><div class="button-stack"><button id="closeGuideBtn" class="primary">'+t('ui.guide_close')+'</button></div>';
     $('closeGuideBtn').onclick=closeHelp;$('closeGuideBtn').focus();
   }
   function closeHelp(){
@@ -148,6 +168,22 @@
     else if(!helpWasPaused&&state.paused)invoke('set_paused',[false]);
     else if(state.paused)showPause();else setState(state);
   }
+  async function changeLanguage(value){
+    if(busy)return;
+    const menu=state.phase==='menu', wasHelp=helpOpen, seed=$('seedInput')?.value;
+    const focused=document.activeElement?.id;
+    const next=await invoke('set_language',[value]);
+    if(!next)return;
+    if(menu){next.phase='menu';setState(next);}
+    if(wasHelp)renderHelp();
+    if(seed!==undefined&&$('seedInput'))$('seedInput').value=seed;
+    if(focused&&$(focused))$(focused).focus();
+    try{localStorage.setItem('emberkeep.language',language);}catch(_){}
+    text('inspect',t('ui.inspect'));
+  }
+  ['languageEn','languageZh'].forEach(id=>$(id).onmousedown=event=>event.preventDefault());
+  $('languageEn').onclick=()=>{if(language!=='en')changeLanguage('en')};
+  $('languageZh').onclick=()=>{if(language!=='zh-CN')changeLanguage('zh-CN')};
   $('pauseBtn').onclick=()=>{if(helpOpen){closeHelp();return}if(state.player&&['playing','upgrade'].includes(state.phase))invoke('set_paused',[!state.paused]);};
   $('helpBtn').onclick=showHelp;
   // HUD and mouse use Python instance methods; keyboard uses registered functions.
@@ -165,7 +201,7 @@
   const keys={KeyW:'up',ArrowUp:'up',KeyD:'right',ArrowRight:'right',KeyS:'down',ArrowDown:'down',KeyA:'left',ArrowLeft:'left',KeyQ:'whirl',KeyE:'bolt',KeyR:'heal',Space:'wait'};
   window.addEventListener('keydown',event=>{
     const key=normalizeKey(event);
-    if(event.target.matches?.('input,textarea,[contenteditable=true]'))return;
+    if(event.target.matches?.('input,textarea,select,[contenteditable=true]'))return;
     if(keys[key]||['Escape','Enter','F3','F5','Digit1','Digit2','Digit3'].includes(key))event.preventDefault();
     if(key==='F3'){if(!event.repeat)$('debug').classList.toggle('hidden');return;}
     if(key==='Escape'){if(!event.repeat)$('pauseBtn').click();return;}
@@ -189,7 +225,7 @@
     hover=mouseTile(event);
     const enemy=(state.enemies||[]).find(e=>e.x===hover.x&&e.y===hover.y);
     const item=(state.items||[]).find(i=>i.x===hover.x&&i.y===hover.y);
-    text('inspect',enemy?enemy.name+' · 生命 '+enemy.hp+'/'+enemy.max_hp:item?(item.kind==='potion'?'治疗药水 · 走近拾取':'旧宝箱 · 走近打开'):'WASD 移动 / 近战 · 点击相邻地面或敌人');
+    text('inspect',enemy?enemy.name+t('ui.hp_prefix')+enemy.hp+'/'+enemy.max_hp:item?(item.kind==='potion'?t('ui.inspect_potion'):t('ui.inspect_chest')):t('ui.inspect'));
   });
   canvas.addEventListener('mouseleave',()=>{hover=null});
   function mouseTile(event){const r=canvas.getBoundingClientRect();return{x:Math.floor((event.clientX-r.left)/r.width*COLS)+camera.x,y:Math.floor((event.clientY-r.top)/r.height*ROWS)+camera.y};}
@@ -288,12 +324,17 @@
   resize();requestAnimationFrame(render);
   async function initialize(){
     try{
-      await new Promise((resolve,reject)=>{if(atlas.complete&&atlas.naturalWidth)resolve();else{atlas.onload=resolve;atlas.onerror=()=>reject(new Error('像素图集加载失败。'))}});
+      await new Promise((resolve,reject)=>{if(atlas.complete&&atlas.naturalWidth)resolve();else{atlas.onload=resolve;atlas.onerror=()=>reject(new Error(t('ui.atlas_error')))}});
       if(document.fonts)await document.fonts.ready;
-      if(!window.host)throw new Error('Python 引擎未连接。请使用 python run.py 启动。');
+      if(!window.host)throw new Error(t('ui.engine_error'));
       liveHero=host.game.hero;
       const result=await invoke('boot');
-      if(!result)throw new Error(error||'游戏初始化失败。');
+      if(result&&!result.language_override){
+        let preferred;try{preferred=localStorage.getItem('emberkeep.language');}catch(_){}
+        if(!['en','zh-CN'].includes(preferred))preferred=/^zh/i.test(navigator.language||'')?'zh-CN':'en';
+        if(preferred!==language)await changeLanguage(preferred);
+      }
+      if(!result)throw new Error(error||t('ui.init_error'));
       initialized=true;window.EMBER_READY=true;
     }catch(err){showError(err)}
   }

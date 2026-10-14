@@ -23,3 +23,18 @@ button,input{-webkit-appearance:none;appearance:none;border-radius:0}
 .hero-card>div:last-child{font-size:10px;line-height:1.35}.hero-card h2{margin:4px 0;line-height:1.3}
 .skills{padding:10px}.skills .section-title{margin-bottom:6px}.skill{padding:5px;margin:3px 0}.skill b{line-height:1.25}.skill small{line-height:1.35;margin-top:4px}.wait-button{padding:7px;margin-top:4px}
 .journal{min-height:64px}.dialog{max-height:100%;overflow-y:auto}
+
+/* Both shipped languages share the same compact HUD. */
+.language-switch{display:flex;border:1px solid #55494b;background:#211e29;flex-shrink:0}
+.language-switch button{font:inherit;font-size:11px;background:transparent;border:0;color:#a6988e;min-height:32px;min-width:46px;padding:5px 9px}
+.language-switch button+button{border-left:1px solid #55494b}
+.language-switch button[aria-pressed="true"]{color:#f1d3a4;background:#49382e}
+.language-switch button:hover:enabled{color:#f1d3a4;background:#3a2e32}
+.language-switch button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+html[lang="en"] .menu-story h1{font-size:64px;letter-spacing:2px;line-height:1.05}
+.skill>span:nth-child(2){min-width:0;flex:1}
+.skill small{white-space:normal;line-height:1.4}
+.skill em{flex-shrink:0}
+html[lang="en"] .section-title{flex-wrap:wrap;gap:3px}
+html[lang="en"] .world-heading{font-size:11px}
+@media(max-width:900px){html[lang="en"] .menu-story h1{font-size:44px}.language-switch button{padding:5px 7px;min-width:42px}}
