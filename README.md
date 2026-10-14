@@ -25,6 +25,27 @@ Choose English or 简体中文 in the top right corner; your preference is remem
 
 The atlas, font and page resources ship with the game. No server or network is needed. Every valid action automatically saves to `~/.emberkeep/save.json`. The pause menu lets you save and return; the main menu continues an unfinished adventure.
 
+## Download and release builds
+
+GitHub Releases provide Windows x64 and macOS Apple Silicon ZIPs; Python is not required.
+On Windows, extract the entire archive and open `Emberkeep/Emberkeep.exe`.
+On macOS, extract and open `Emberkeep.app`. The App is ad-hoc signed without Apple Developer signing or notarization; if macOS blocks it, attempt to launch it, then use **System Settings → Privacy & Security → Open Anyway**.
+Intel Macs are not supported by these bundles. Save files use the same `~/.emberkeep` directory as source builds.
+
+Push a tag matching the version in `pyproject.toml` (currently `v1.0.0`) to build both platforms. Only after tests and both extracted ZIPs pass verification does CI automatically create the Release with the two ZIPs and `SHA256SUMS.txt`. Re-running a successful tag build replaces its release assets.
+Manual runs of **Build desktop releases** provide Actions artifacts for 14 days, with a commit suffix in the filenames; they do not publish a Release.
+
+To reproduce a build on Windows x64 or macOS ARM64 with Python 3.12:
+
+```bash
+python -m pip install -r requirements-build.txt
+python -m pytest -q
+python tools/build_release.py --tag v1.0.0
+```
+
+Verified ZIPs and individual checksums appear in `dist/releases/`; smoke reports and logs are in `build/diagnostics/`. The build checks English and Chinese UI startup, the native bridge and save/load from the extracted application with an isolated save. It requires a graphical desktop.
+For diagnostics, use `--smoke --cpu --smoke-report result.json`; the report records success or failure, and failure exits nonzero. Windows windowed logs are stored in `~/.emberkeep/emberkeep.log`.
+
 ## Controls
 
 | Input | Action |

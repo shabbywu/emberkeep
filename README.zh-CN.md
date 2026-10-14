@@ -25,6 +25,28 @@ python run.py
 
 图集、字体和页面资源均随项目提供，游戏运行不需要服务器或网络。默认存档为 `~/.emberkeep/save.json`，每次有效行动后自动保存；暂停菜单可以保存并返回，主菜单可以继续冒险。
 
+## 下载与发布构建
+
+GitHub Release 提供 Windows x64 和 macOS Apple Silicon ZIP，无需安装 Python。
+Windows 需完整解压，再打开 `Emberkeep/Emberkeep.exe`；macOS 解压后打开 `Emberkeep.app`。
+App 使用 ad-hoc 签名，尚未接入 Apple 开发者签名及公证；如果系统阻止打开，尝试启动后，在**系统设置 → 隐私与安全性 → 仍要打开**中允许运行。
+这些安装包暂不支持 Intel Mac。存档与源码运行版本共用 `~/.emberkeep` 目录。
+
+推送与 `pyproject.toml` 版本匹配的 tag（目前为 `v1.0.0`）会构建两个平台。测试和两个解压后的安装包全部验证通过，CI 才自动创建 Release，附上两个 ZIP 和 `SHA256SUMS.txt`；重新运行成功的 tag 构建会替换对应发布附件。
+手动运行 **Build desktop releases** 仅提供保留 14 天的 Actions 产物，文件名追加提交短 SHA，不创建 Release。
+
+在 Windows x64 或 macOS ARM64 上使用 Python 3.12 可复现构建：
+
+```bash
+python -m pip install -r requirements-build.txt
+python -m pytest -q
+python tools/build_release.py --tag v1.0.0
+```
+
+验证通过的 ZIP 和单独校验文件位于 `dist/releases/`；冒烟报告与日志位于 `build/diagnostics/`。
+构建会从解压后的应用检查中英文界面启动、原生桥接与保存／加载，并使用隔离存档；需要图形桌面。
+可用 `--smoke --cpu --smoke-report result.json` 生成诊断报告，失败返回非零退出码。Windows 无控制台日志位于 `~/.emberkeep/emberkeep.log`。
+
 ## 操作
 
 | 操作 | 用途 |

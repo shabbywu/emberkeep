@@ -2,10 +2,12 @@
 import argparse
 import asyncio
 from importlib.metadata import version
+import json
 import mimetypes
 from pathlib import Path
 import sys
 import tempfile
+import traceback
 
 from game.bridge import Controller
 from game.storage import SaveStore
@@ -80,13 +82,28 @@ def main():
     parser.add_argument('--seed', type=int, help='Fixed starting seed, 0..2147483647')
     parser.add_argument('--data-dir', type=Path, help='Save directory; default ~/.emberkeep')
     parser.add_argument('--smoke', action='store_true', help='Native self-test with an isolated temporary save')
+    parser.add_argument('--smoke-report', type=Path, help='Write a JSON result (requires --smoke)')
     args = parser.parse_args()
+    if args.smoke_report and not args.smoke:
+        parser.error('--smoke-report requires --smoke')
     if args.seed is not None and not 0 <= args.seed < 2**31:
         parser.error('--seed must be between 0 and 2147483647')
     if args.smoke:
-        with tempfile.TemporaryDirectory(prefix='emberkeep-smoke-') as folder:
-            controller = Controller(SaveStore(folder), args.seed, args.lang)
-            asyncio.run(smoke(controller, args.cpu, folder))
+        report = {'passed': False, 'language': args.lang, 'error': None}
+        try:
+            with tempfile.TemporaryDirectory(prefix='emberkeep-smoke-') as folder:
+                controller = Controller(SaveStore(folder), args.seed, args.lang)
+                asyncio.run(smoke(controller, args.cpu, folder))
+            report['passed'] = True
+        except Exception as exc:
+            report['error'] = f'{type(exc).__name__}: {exc}'
+            traceback.print_exc()
+        finally:
+            if args.smoke_report:
+                args.smoke_report.parent.mkdir(parents=True, exist_ok=True)
+                args.smoke_report.write_text(json.dumps(report, indent=2), encoding='utf-8')
+        if not report['passed']:
+            raise SystemExit(1)
     else:
         store = SaveStore(args.data_dir)
         controller = Controller(store, args.seed, args.lang)
