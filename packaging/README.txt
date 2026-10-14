@@ -15,6 +15,7 @@ Windows diagnostics (when no console is attached): ~/.emberkeep/emberkeep.log.
 源码和原创像素图集：MIT；字体：OFL（assets/font-license.txt）。
 Code and original pixel art: MIT (LICENSE).
 Bundled font: OFL (assets/font-license.txt).
+Bundled Alpine.js: MIT (assets/vendor/alpine-LICENSE.txt).
 ultralight-py and Ultralight/AppCore retain their own licenses:
 https://github.com/shabbywu/ultralight-py
 https://ultralig.ht/license/

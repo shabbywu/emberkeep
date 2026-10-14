@@ -6,19 +6,13 @@
     return (translations[key]||key).replace(/\{(\w+)\}/g,(_,name)=>String(params[name]??'{'+name+'}'));
   }
   function applyLanguage(next){
-    if(!next.catalog)return;
-    translations=next.catalog;language=next.language;
-    document.documentElement.lang=language;
-    document.querySelectorAll('[data-i18n]').forEach(node=>{
-      // Catalogs contain a few typographic HTML entities, never user markup.
-      node.textContent=t(node.dataset.i18n).replace(/&nbsp;/g,'\u00a0');
-    });
-    for(const attr of ['title','aria-label'])document.querySelectorAll('[data-i18n-'+attr+']').forEach(node=>node.setAttribute(attr,t(node.getAttribute('data-i18n-'+attr))));
-    $('languageEn').setAttribute('aria-pressed',String(language==='en'));
-    $('languageZh').setAttribute('aria-pressed',String(language==='zh-CN'));
+    const changed=next.language!==language||!Object.keys(translations).length;
+    if(next.catalog&&changed)translations=next.catalog;
+    if(next.language)language=next.language;
+    return changed;
   }
   const $ = id => document.getElementById(id);
-  const canvas=$('board'), ctx=canvas.getContext('2d'), app=$('app'), card=$('card');
+  const canvas=$('board'), ctx=canvas.getContext('2d'), card=$('card');
   const T=16, COLS=23, ROWS=17, CW=COLS*T, CH=ROWS*T;
   const atlas=new Image(); atlas.src='atlas.png';
   const sprites={floor:0,moss:1,wall:2,wall_dark:3,stairs:4,torch:5,hero:6,hero_step:7,
@@ -29,17 +23,19 @@
   let camera={x:0,y:0}, hover=null, tween=null, enemyTweens={}, effects=[], particles=[];
   let shakeUntil=0, toastUntil=0, moveAfter=0, fps=60, lastFrame=0, frameCount=0;
   const icon=(name,extra='')=>{const i=sprites[name]??27;return '<span class="sprite '+extra+'" style="background-position:-'+(i%8*32)+'px -'+(Math.floor(i/8)*32)+'px"></span>'};
-  const text=(id,value)=>{$(id).textContent=String(value)};
+  const ui=EmberHTML.ui;
+  const text=(id,value)=>{ui.text[id]=String(value)};
   function showError(value){
     error=String(value?.message||value);
-    text('errorText',error);$('error').classList.remove('hidden');
+    ui.error=error;
   }
-  function toast(value){text('toast',value);$('toast').classList.add('show');toastUntil=performance.now()+1900}
-  $('dismissError').onclick=()=>{$('error').classList.add('hidden');error=''};
+  function toast(value){ui.toast=value;ui.toastVisible=true;toastUntil=performance.now()+1900}
+  $('dismissError').onclick=()=>{ui.error='';error=''};
 
   async function invoke(name,args=[]){
     if(busy)return;
-    busy=true;$('languageEn').disabled=true;$('languageZh').disabled=true;app.classList.add('busy');text('saveStatus',name==='load_game'?t('ui.loading'):t('ui.working'));
+    busy=true;
+    const feedbackTimer=setTimeout(()=>{ui.working=name;},200);
     const started=performance.now();
     try{
       const fn=window.host?(name.startsWith('game.')?host.game[name.slice(5)]:host[name]):null;
@@ -51,24 +47,31 @@
         const noTurn=['move','whirl','cast_bolt','heal','wait_turn','interact'].includes(name.replace('game.',''))&&next.revision===state.revision&&next.phase==='playing';
         const message=next.messages?.[next.messages.length-1];
         const changedMessage=message&&message!==state.messages?.[state.messages.length-1];
-        error='';$('error').classList.add('hidden');setState(next);
+        if(name==='set_language'&&state.phase==='menu')next.phase='menu';
+        error='';ui.error='';setState(next,{preserveHelp:name==='set_language'});
         if(noTurn&&changedMessage)toast(message);
       }
       if(name==='save_game')toast(t('ui.saved_toast'));
       return next;
-    }catch(err){showError(err);return null}
+    }catch(err){
+      showError(err);
+      if(name==='save_game'){state.saved=false;state.save_error=error;ui.s.saved=false;ui.s.save_error=error;}
+      return null;
+    }
     finally{
-      busy=false;$('languageEn').disabled=false;$('languageZh').disabled=false;app.classList.remove('busy');
-      if(state.phase!=='menu')text('saveStatus',state.saved?t('ui.saved'):t('ui.unsaved'));
-      else text('saveStatus',t('ui.idle'));
+      clearTimeout(feedbackTimer);ui.working='';
+      await EmberHTML.nextTick();
+      busy=false;
       if(pauseRequested){pauseRequested=false;if(state.player&&!state.paused&&['playing','upgrade'].includes(state.phase))invoke('set_paused',[true]);}
     }
   }
 
-  function setState(next){
-    applyLanguage(next);
+  function setState(next,{preserveHelp=false}={}){
+    const languageChanged=applyLanguage(next);
+    if(languageChanged)ui.text.inspect='';
     const previous=state;
-    state=next;app.dataset.phase=state.phase;
+    state=next;
+    EmberHTML.update(next,liveHero);
     visible=new Set(state.visible||[]);
     if(next.player){
       const p=next.player;
@@ -87,69 +90,58 @@
           }
         }
       }
-      refreshHUD();
-      if(next.save_error){showError(next.save_error);$('saveStatus').classList.add('bad');}
-      else $('saveStatus').classList.remove('bad');
+      if(next.save_error)showError(next.save_error);
     }
-    helpOpen=false;
-    if(next.phase==='menu')showMenu();
-    else if(next.paused)showPause();
-    else if(next.phase==='upgrade')showUpgrades();
-    else if(next.phase==='won'||next.phase==='dead')showEnding();
-    else{$('overlay').classList.add('hidden');canvas.focus();}
-    resize();
+    const dialogChanged=languageChanged||previous.phase!==next.phase||previous.paused!==next.paused||
+      (helpOpen&&!preserveHelp)||(next.phase==='menu'&&previous.has_save!==next.has_save)||
+      (next.phase==='upgrade'&&JSON.stringify(previous.upgrades)!==JSON.stringify(next.upgrades));
+    if(!preserveHelp)helpOpen=false;
+    if(helpOpen){if(languageChanged)renderHelp();}
+    else if(dialogChanged){
+      if(next.phase==='menu')showMenu();
+      else if(next.paused)showPause();
+      else if(next.phase==='upgrade')showUpgrades();
+      else if(next.phase==='won'||next.phase==='dead')showEnding();
+      else ui.dialogVisible=false;
+    }
+    if(!ui.dialogVisible&&document.activeElement!==canvas)canvas.focus({preventScroll:true});
   }
 
-  function refreshHUD(){
-    const p=state.player;
-    // This is the real Python object, cached once and still live across new/load.
-    const hero=liveHero||p;
-    text('levelLabel','Lv. '+hero.level);text('hpText',hero.hp+' / '+hero.max_hp);
-    $('hpFill').style.width=(100*hero.hp/hero.max_hp)+'%';
-    text('attackText',hero.attack);text('armorText',hero.armor);text('potionCount','×'+hero.potions);
-    text('xpText',p.xp+' / '+p.xp_next);$('xpFill').style.width=Math.min(100,100*p.xp/p.xp_next)+'%';
-    text('floorName',t('ui.floor',{floor:state.floor,floors:state.floors,name:state.floor_name}));
-    text('turnCount',t('ui.turn',{turn:state.turn}));text('seedLabel','SEED '+state.seed);
-    text('whirlCd',p.whirl_remaining?t('ui.cooldown',{turns:p.whirl_remaining}):t('ui.ready'));
-    text('boltCd',p.bolt_remaining?t('ui.cooldown',{turns:p.bolt_remaining}):t('ui.ready'));
-    $('whirlBtn').classList.toggle('cooldown',p.whirl_remaining>0);
-    $('boltBtn').classList.toggle('cooldown',p.bolt_remaining>0);
-    text('killsText',state.kills);text('goldText',state.gold);
-    $('floorPath').querySelectorAll('span').forEach((node,i)=>{node.classList.toggle('active',i+1===state.floor);node.classList.toggle('cleared',i+1<state.floor)});
-    const log=$('logLines');log.textContent='';
-    (state.messages||[]).slice(-4).forEach(line=>{const node=document.createElement('p');node.textContent=line;log.appendChild(node)});
-    log.scrollTop=log.scrollHeight;
-    const boss=(state.enemies||[]).find(e=>e.kind==='warden');
-    $('bossHud').classList.toggle('hidden',!boss||state.phase!=='playing');
-    if(boss){$('bossFill').style.width=(100*boss.hp/boss.max_hp)+'%';text('bossPhase',boss.rage?t('ui.boss_rage'):t('ui.boss_calm'));}
-  }
-
-  function dialog(className=''){$('overlay').classList.remove('hidden');card.className='dialog '+className;}
+  function afterDialog(bind){EmberHTML.nextTick().then(bind);}
+  function dialog(className=''){ui.dialogVisible=true;ui.dialogClass='dialog '+className;}
   function showMenu(){
     dialog('menu-card');
-    card.innerHTML='<div class="menu-story"><div class="overline">THE LAST LIGHT IN THE DARK</div><h1>'+t('ui.menu_title_top')+'<br>'+t('ui.menu_title_bottom')+'</h1><div class="english-title">EMBERKEEP</div><p>'+t('ui.menu_story_one')+'<br>'+t('ui.menu_story_two')+'</p><div class="menu-rune"><i></i>'+t('ui.menu_motto')+'<i></i></div></div>'+
+    ui.dialogHTML='<div class="menu-story"><div class="overline">THE LAST LIGHT IN THE DARK</div><h1>'+t('ui.menu_title_top')+'<br>'+t('ui.menu_title_bottom')+'</h1><div class="english-title">EMBERKEEP</div><p>'+t('ui.menu_story_one')+'<br>'+t('ui.menu_story_two')+'</p><div class="menu-rune"><i></i>'+t('ui.menu_motto')+'<i></i></div></div>'+
       '<div class="menu-actions"><div class="overline">'+t('ui.menu_start_caption')+'</div><div class="button-stack"><button id="startBtn" class="primary">'+t('ui.start')+'</button><button id="continueBtn" class="secondary" '+(!state.has_save?'disabled':'')+'>'+t('ui.continue')+'</button></div><label class="seed-input">'+t('ui.seed')+'<input id="seedInput" type="text" inputmode="numeric" placeholder="'+t('ui.random')+'" maxlength="10" aria-label="'+t('ui.seed_label')+'"></label><button id="guideBtn" class="text-button">'+t('ui.menu_guide')+'</button><div class="menu-divider"></div><div class="menu-badge">FOUR FLOORS · ONE FLAME</div><p class="under-note">'+t('ui.menu_note')+'<br>'+t('ui.menu_death_note')+'</p><button id="quitBtn" class="text-button">'+t('ui.quit')+'</button></div>';
-    $('startBtn').onclick=()=>{const value=$('seedInput').value.trim();if(value&&!/^\d+$/.test(value)){showError(t('error.seed'));return}invoke('new_run',[value?Number(value):null]);};
-    $('continueBtn').onclick=()=>invoke('load_game');$('guideBtn').onclick=showHelp;
-    $('quitBtn').onclick=()=>{if(!busy)host.quit_game().catch(showError)};
-    $('startBtn').focus();
+    afterDialog(()=>{
+      $('startBtn').onclick=()=>{const value=$('seedInput').value.trim();if(value&&!/^\d+$/.test(value)){showError(t('error.seed'));return}invoke('new_run',[value?Number(value):null]);};
+      $('continueBtn').onclick=()=>invoke('load_game');$('guideBtn').onclick=showHelp;
+      $('quitBtn').onclick=()=>{if(!busy)host.quit_game().catch(showError)};
+      $('startBtn').focus();
+    });
   }
   function showUpgrades(){
     dialog();
-    card.innerHTML='<div class="overline">A GIFT FROM THE EMBERS</div><h1>'+t('ui.upgrade_title')+'</h1><p class="description">'+t('ui.level')+state.player.level+' → '+(state.player.level+1)+'<br>'+t('ui.upgrade_note')+'</p><div class="upgrade-grid">'+state.upgrades.map((u,i)=>'<button class="upgrade-card" id="choice'+i+'" data-upgrade="'+u.id+'"><span class="choice-number">0'+(i+1)+'</span>'+icon(u.icon)+'<small>'+u.tag+'</small><strong>'+u.name+'</strong><p>'+u.desc+'</p><kbd>'+(i+1)+'</kbd></button>').join('')+'</div><div class="under-note">'+t('ui.upgrade_keys')+'</div>';
-    card.querySelectorAll('[data-upgrade]').forEach(node=>node.onclick=()=>invoke('choose_upgrade',[node.dataset.upgrade]));
-    $('choice0').focus();
+    ui.dialogHTML='<div class="overline">A GIFT FROM THE EMBERS</div><h1>'+t('ui.upgrade_title')+'</h1><p class="description">'+t('ui.level')+state.player.level+' → '+(state.player.level+1)+'<br>'+t('ui.upgrade_note')+'</p><div class="upgrade-grid">'+state.upgrades.map((u,i)=>'<button class="upgrade-card" id="choice'+i+'" data-upgrade="'+u.id+'"><span class="choice-number">0'+(i+1)+'</span>'+icon(u.icon)+'<small>'+u.tag+'</small><strong>'+u.name+'</strong><p>'+u.desc+'</p><kbd>'+(i+1)+'</kbd></button>').join('')+'</div><div class="under-note">'+t('ui.upgrade_keys')+'</div>';
+    afterDialog(()=>{
+      card.querySelectorAll('[data-upgrade]').forEach(node=>node.onclick=()=>invoke('choose_upgrade',[node.dataset.upgrade]));
+      $('choice0').focus();
+    });
   }
   function showPause(){
-    dialog();card.innerHTML='<div class="overline">KEEP THE FLAME ALIVE</div><h1>'+t('ui.pause_title')+'</h1><p class="description">'+t('ui.pause_note')+'<br>'+t('ui.pause_saved')+'</p><div class="button-stack"><button id="resumeBtn" class="primary">'+t('ui.resume')+'</button><button id="saveMenuBtn" class="secondary">'+t('ui.save_menu')+'</button><button id="pauseGuideBtn" class="text-button">'+t('ui.guide')+'</button></div><div class="under-note">'+t('ui.pause_keys')+'</div>';
-    $('resumeBtn').onclick=()=>invoke('set_paused',[false]);
-    $('saveMenuBtn').onclick=async()=>{const saved=await invoke('save_game');if(saved)await invoke('boot');};
-    $('pauseGuideBtn').onclick=showHelp;$('resumeBtn').focus();
+    dialog();ui.dialogHTML='<div class="overline">KEEP THE FLAME ALIVE</div><h1>'+t('ui.pause_title')+'</h1><p class="description">'+t('ui.pause_note')+'<br>'+t('ui.pause_saved')+'</p><div class="button-stack"><button id="resumeBtn" class="primary">'+t('ui.resume')+'</button><button id="saveMenuBtn" class="secondary">'+t('ui.save_menu')+'</button><button id="pauseGuideBtn" class="text-button">'+t('ui.guide')+'</button></div><div class="under-note">'+t('ui.pause_keys')+'</div>';
+    afterDialog(()=>{
+      $('resumeBtn').onclick=()=>invoke('set_paused',[false]);
+      $('saveMenuBtn').onclick=async()=>{const saved=await invoke('save_game');if(saved)await invoke('boot');};
+      $('pauseGuideBtn').onclick=showHelp;$('resumeBtn').focus();
+    });
   }
   function showEnding(){
     dialog();const won=state.phase==='won';
-    card.innerHTML='<div class="overline">'+(won?'THE DAWN REMEMBERS YOU':'ANOTHER FLAME, ANOTHER NIGHT')+'</div>'+icon(won?'lamp':'skull','result-emblem')+'<h1>'+(won?t('ui.win_title'):t('ui.lose_title'))+'</h1><p class="description">'+(won?t('ui.win_note'):t('ui.lose_note'))+'</p><div class="result-grid"><span>'+t('ui.score')+'<strong>'+state.score+'</strong></span><span>'+t('ui.floor_reached')+'<strong>'+state.floor+' / 4</strong></span><span>'+t('ui.kills')+'<strong>'+state.kills+'</strong></span><span>'+t('ui.turns')+'<strong>'+state.turn+'</strong></span></div><p class="result-message">'+t('ui.level')+state.player.level+t('ui.gold_prefix')+state.gold+t('ui.seed_prefix')+state.seed+'</p><div class="button-stack"><button id="restartBtn" class="primary">'+t('ui.restart')+'</button><button id="endingMenuBtn" class="secondary">'+t('ui.main_menu')+'</button></div>';
-    $('restartBtn').onclick=()=>invoke('new_run');$('endingMenuBtn').onclick=()=>invoke('boot');$('restartBtn').focus();
+    ui.dialogHTML='<div class="overline">'+(won?'THE DAWN REMEMBERS YOU':'ANOTHER FLAME, ANOTHER NIGHT')+'</div>'+icon(won?'lamp':'skull','result-emblem')+'<h1>'+(won?t('ui.win_title'):t('ui.lose_title'))+'</h1><p class="description">'+(won?t('ui.win_note'):t('ui.lose_note'))+'</p><div class="result-grid"><span>'+t('ui.score')+'<strong>'+state.score+'</strong></span><span>'+t('ui.floor_reached')+'<strong>'+state.floor+' / 4</strong></span><span>'+t('ui.kills')+'<strong>'+state.kills+'</strong></span><span>'+t('ui.turns')+'<strong>'+state.turn+'</strong></span></div><p class="result-message">'+t('ui.level')+state.player.level+t('ui.gold_prefix')+state.gold+t('ui.seed_prefix')+state.seed+'</p><div class="button-stack"><button id="restartBtn" class="primary">'+t('ui.restart')+'</button><button id="endingMenuBtn" class="secondary">'+t('ui.main_menu')+'</button></div>';
+    afterDialog(()=>{
+      $('restartBtn').onclick=()=>invoke('new_run');$('endingMenuBtn').onclick=()=>invoke('boot');$('restartBtn').focus();
+    });
   }
   async function showHelp(){
     if(busy)return;
@@ -159,8 +151,10 @@
   }
   function renderHelp(){
     helpOpen=true;dialog();
-    card.innerHTML='<div class="overline">THE WAY OF THE LANTERN</div><h1>'+t('ui.guide')+'</h1><p class="description">'+t('ui.guide_intro')+'</p><div class="guide-grid"><div><b>'+t('ui.guide_move_title')+'</b><br><kbd>WASD</kbd>'+t('ui.guide_move_keys')+'<br>'+t('ui.guide_mouse')+'</div><div><b>'+t('ui.guide_skill_title')+'</b><br><kbd>Q</kbd>'+t('ui.guide_whirl')+'<br><kbd>E</kbd>'+t('ui.guide_bolt')+'</div><div><b>'+t('ui.guide_survive_title')+'</b><br><kbd>R</kbd>'+t('ui.guide_heal')+'<br><kbd>Space</kbd>'+t('ui.guide_wait')+'</div><div><b>'+t('ui.guide_save_title')+'</b><br><kbd>Esc</kbd>'+t('ui.guide_pause')+'<kbd>F5</kbd>'+t('ui.guide_save')+'<br>'+t('ui.guide_focus')+'</div><div><b>'+t('ui.guide_enemy_title')+'</b><br>'+t('ui.guide_enemy_one')+'<br>'+t('ui.guide_enemy_two')+'</div><div><b>'+t('ui.guide_goal_title')+'</b><br>'+t('ui.guide_growth')+'<br>'+t('ui.guide_goal')+'</div></div><p class="description">'+t('ui.guide_warning')+'</p><div class="button-stack"><button id="closeGuideBtn" class="primary">'+t('ui.guide_close')+'</button></div>';
-    $('closeGuideBtn').onclick=closeHelp;$('closeGuideBtn').focus();
+    ui.dialogHTML='<div class="overline">THE WAY OF THE LANTERN</div><h1>'+t('ui.guide')+'</h1><p class="description">'+t('ui.guide_intro')+'</p><div class="guide-grid"><div><b>'+t('ui.guide_move_title')+'</b><br><kbd>WASD</kbd>'+t('ui.guide_move_keys')+'<br>'+t('ui.guide_mouse')+'</div><div><b>'+t('ui.guide_skill_title')+'</b><br><kbd>Q</kbd>'+t('ui.guide_whirl')+'<br><kbd>E</kbd>'+t('ui.guide_bolt')+'</div><div><b>'+t('ui.guide_survive_title')+'</b><br><kbd>R</kbd>'+t('ui.guide_heal')+'<br><kbd>Space</kbd>'+t('ui.guide_wait')+'</div><div><b>'+t('ui.guide_save_title')+'</b><br><kbd>Esc</kbd>'+t('ui.guide_pause')+'<kbd>F5</kbd>'+t('ui.guide_save')+'<br>'+t('ui.guide_focus')+'</div><div><b>'+t('ui.guide_enemy_title')+'</b><br>'+t('ui.guide_enemy_one')+'<br>'+t('ui.guide_enemy_two')+'</div><div><b>'+t('ui.guide_goal_title')+'</b><br>'+t('ui.guide_growth')+'<br>'+t('ui.guide_goal')+'</div></div><p class="description">'+t('ui.guide_warning')+'</p><div class="button-stack"><button id="closeGuideBtn" class="primary">'+t('ui.guide_close')+'</button></div>';
+    afterDialog(()=>{
+      $('closeGuideBtn').onclick=closeHelp;$('closeGuideBtn').focus();
+    });
   }
   function closeHelp(){
     helpOpen=false;
@@ -170,12 +164,10 @@
   }
   async function changeLanguage(value){
     if(busy)return;
-    const menu=state.phase==='menu', wasHelp=helpOpen, seed=$('seedInput')?.value;
+    const seed=$('seedInput')?.value;
     const focused=document.activeElement?.id;
     const next=await invoke('set_language',[value]);
     if(!next)return;
-    if(menu){next.phase='menu';setState(next);}
-    if(wasHelp)renderHelp();
     if(seed!==undefined&&$('seedInput'))$('seedInput').value=seed;
     if(focused&&$(focused))$(focused).focus();
     try{localStorage.setItem('emberkeep.language',language);}catch(_){}
@@ -203,7 +195,7 @@
     const key=normalizeKey(event);
     if(event.target.matches?.('input,textarea,select,[contenteditable=true]'))return;
     if(keys[key]||['Escape','Enter','F3','F5','Digit1','Digit2','Digit3'].includes(key))event.preventDefault();
-    if(key==='F3'){if(!event.repeat)$('debug').classList.toggle('hidden');return;}
+    if(key==='F3'){if(!event.repeat)ui.debugVisible=!ui.debugVisible;return;}
     if(key==='Escape'){if(!event.repeat)$('pauseBtn').click();return;}
     if(busy)return;
     if(key==='F5'&&state.player){if(!event.repeat)invoke('save_game');return;}
@@ -229,8 +221,9 @@
   });
   canvas.addEventListener('mouseleave',()=>{hover=null});
   function mouseTile(event){const r=canvas.getBoundingClientRect();return{x:Math.floor((event.clientX-r.left)/r.width*COLS)+camera.x,y:Math.floor((event.clientY-r.top)/r.height*ROWS)+camera.y};}
-  function resize(){const r=$('viewport').getBoundingClientRect();const fit=Math.min((r.width-6)/CW,(r.height-6)/CH);const scale=fit>=1?Math.floor(fit):Math.max(.1,fit);canvas.style.width=Math.floor(CW*scale)+'px';canvas.style.height=Math.floor(CH*scale)+'px';}
+  function resize(){const r=$('viewport').getBoundingClientRect();const fit=Math.min((r.width-6)/CW,(r.height-6)/CH);const scale=fit>=1?Math.floor(fit):Math.max(.1,fit);const width=Math.floor(CW*scale)+'px',height=Math.floor(CH*scale)+'px';if(canvas.style.width!==width)canvas.style.width=width;if(canvas.style.height!==height)canvas.style.height=height;}
   window.addEventListener('resize',resize);
+  if(window.ResizeObserver)new ResizeObserver(resize).observe($('viewport'));
 
   function sprite(name,x,y,alpha=1,size=16){
     if(!atlas.complete||!atlas.naturalWidth)return;
@@ -311,8 +304,8 @@
       ctx.globalAlpha=1;
     }
     ctx.restore();
-    if(ts>toastUntil)$('toast').classList.remove('show');
-    if(!$('debug').classList.contains('hidden'))text('debug','ULTRALIGHT-PY 0.5.0 / APPCORE\nTyped Python API  ·  '+calls+' calls\nLast roundtrip    '+ms.toFixed(1)+' ms\nPresentation      '+Math.round(fps)+' fps\nLive hero proxy   hp='+ (liveHero?liveHero.hp:'—')+'\nLive game proxy   turn='+(window.host?host.game.turn:'—')+'\nPython.to_value   detached render snapshot\nasyncio Promise   atomic save / load');
+    if(ui.toastVisible&&ts>toastUntil)ui.toastVisible=false;
+    if(ui.debugVisible)text('debug','ULTRALIGHT-PY 0.5.0 / APPCORE\nTyped Python API  ·  '+calls+' calls\nLast roundtrip    '+ms.toFixed(1)+' ms\nPresentation      '+Math.round(fps)+' fps\nLive hero proxy   hp='+ (liveHero?liveHero.hp:'—')+'\nLive game proxy   turn='+(window.host?host.game.turn:'—')+'\nPython.to_value   detached render snapshot\nasyncio Promise   atomic save / load');
     requestAnimationFrame(render);
   }
   window.EmberUI={invoke,diagnostics:()=>({phase:state.phase,turn:state.turn||0,busy,error,initialized,

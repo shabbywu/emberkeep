@@ -4,7 +4,7 @@
 
 | 验证 | 结果 |
 | --- | --- |
-| pytest 规则与桥接测试 | 128 项通过（包含 i18n） |
+| pytest 规则与桥接测试 | 132 项通过（包含 i18n 与发布验证） |
 | 原生 CPU 完整战役 | 种子 7、19、42 均通过四层并胜利 |
 | 原生自然失败 | 玩家正常探索后等待，被敌人击败，进入失败结算 |
 | 默认 AppCore 渲染 | 原生启动、资源、实例方法、只读属性、异步保存和加载冒烟测试通过 |
@@ -29,11 +29,23 @@ English / 简体中文覆盖菜单、HUD、强化、敌人、日志与错误提�
 
 此次国际化未完成新的完整原生战役；上方完整战役结果来自此前基线。按要求不继续运行完整测试。英文截图为 `docs/screenshots/gameplay-en.png`。
 
+## HTML 响应式更新验证
+
+Alpine.js 3.17.4 已本地随包提供。`tests/native_html.py` 在真实 AppCore CPU 窗口中验证：
+
+- 种子 19 连续移动四回合，未变化的翻译、语言按钮、保存状态、生命／经验显示、日志和 Canvas 属性产生 0 次 DOM 修改，回合数正常更新。
+- 日志段落和 Canvas 保持原有节点；慢保存超过 200 毫秒后显示忙碌反馈，重复操作从开始就被拦截。
+- 保存失败显示未保存和错误，恢复保存后状态清除；中英文切换保留菜单种子与焦点，指南和暂停菜单正常切换。
+- macOS ARM64 ZIP 已重新构建，解压后的 App 通过中英文原生冒烟验证；Windows 由发布 CI 执行相同检查。
+
+此次未重复完整战役。原生 UI 验证使用 Python 3.10；打包验证使用 Python 3.12。
+
 ## 重现
 
 ```bash
 python -m pytest -q
 python run.py --smoke
+python tests/native_html.py
 python tests/native_acceptance.py --cpu
 python tests/native_restart.py
 ```

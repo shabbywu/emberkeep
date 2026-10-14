@@ -66,6 +66,7 @@ python tools/build_release.py --tag v1.0.0
 - [`game/engine.py`](game/engine.py)：地图状态、战斗、AI、成长与胜负；移动、技能和交互分别实现为明确方法，共享回合收尾逻辑。
 - [`game/bridge.py`](game/bridge.py)：带类型标注的桥接层；`Controller.register_api()` 注册 13 个独立 API，并通过 `register_object` 暴露游戏状态和实例方法。
 - [`run.py`](run.py)：AppCore 原生窗口、asyncio 循环和 `resource_loader`；[`assets/`](assets/) 提供渲染与 UI。
+- [`assets/ui.js`](assets/ui.js)：Alpine.js HTML 绑定，稳定的显示字段只在值变化时更新，保留未变化的翻译、血条和日志节点；忙碌反馈延迟 200 毫秒显示，重复输入仍立即拦截。Canvas 动画独立运行。
 - [`game/storage.py`](game/storage.py)：异步读写带版本的 JSON 存档，保存包含随机数状态，使用原子替换。
 
 键盘调用注册函数，例如 `host.move('right')`；技能栏和鼠标调用实例方法，例如 `host.game.whirl()`。HUD 读取 `host.game.hero.hp` 等实时只读属性，绘制快照通过 `Python.to_value()` 获取。前端接口声明见 [`assets/bridge.d.ts`](assets/bridge.d.ts)。
@@ -78,8 +79,10 @@ python tools/build_release.py --tag v1.0.0
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 python run.py --smoke
+python tests/native_html.py
 ```
 
 已在真实 0.5.0 环境完成规则测试、三个种子的原生通关和自然失败。详细结果与未验证项见 [验证记录](docs/VALIDATION.md)，实际原生截图位于 [`docs/screenshots/`](docs/screenshots/)。
 
 源码与原创像素图集使用 MIT；随包 Noto Sans SC 字体使用 OFL，许可证位于 `assets/font-license.txt`。ultralight-py 和 Ultralight/AppCore 遵循各自许可证。
+Alpine.js 3.17.4 随项目本地提供，无需运行时联网；MIT 许可证位于 `assets/vendor/alpine-LICENSE.txt`。

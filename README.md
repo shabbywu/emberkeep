@@ -65,6 +65,7 @@ Red warning tiles are struck next turn: move away. Walls and unavailable skills 
 - [`game/engine.py`](game/engine.py): state, combat, AI, growth and endings. Explicit action methods share one turn boundary.
 - [`game/bridge.py`](game/bridge.py): typed bridge. `Controller.register_api()` installs 13 explicit APIs and exposes live state and instance commands through `register_object`.
 - [`run.py`](run.py): native AppCore window, asyncio loop and `resource_loader`; [`assets/`](assets/) supplies rendering and UI.
+- [`assets/ui.js`](assets/ui.js): Alpine.js HTML bindings. Stable presentation fields update only when their values change; unchanged translations, meters and log nodes stay intact. Busy feedback appears after 200 ms, while input is gated immediately. Canvas animation remains independent.
 - [`game/storage.py`](game/storage.py): asynchronous, versioned JSON saves with RNG state and atomic replacement.
 
 The keyboard calls registered functions such as `host.move('right')`; the skill bar and mouse call instance methods such as `host.game.whirl()`. The HUD reads live, read-only properties such as `host.game.hero.hp`; `Python.to_value()` copies render snapshots. See [`assets/bridge.d.ts`](assets/bridge.d.ts) for the frontend interface.
@@ -77,8 +78,10 @@ Text lives in [`assets/locales/`](assets/locales/). Python returns translated di
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 python run.py --smoke
+python tests/native_html.py
 ```
 
 Rule tests, three native winning campaigns and a natural defeat were validated with the real 0.5.0 runtime. See [validation](docs/VALIDATION.md) for results and limits, and [`docs/screenshots/`](docs/screenshots/) for native captures.
 
 Code and original pixel art are MIT licensed. The bundled Noto Sans SC font uses OFL; see `assets/font-license.txt`. ultralight-py and Ultralight/AppCore retain their own licenses.
+Alpine.js 3.17.4 is vendored locally, so it adds no runtime network requirement; its MIT license is in `assets/vendor/alpine-LICENSE.txt`.
