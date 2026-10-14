@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=8,<10
+Pillow>=11,<13
+fonttools[woff]>=4.55

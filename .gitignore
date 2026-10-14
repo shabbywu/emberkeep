@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.log
+.codebase-memory/
+local-save/
+dist/
+docs/reports/
+build/
+.DS_Store
