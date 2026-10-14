@@ -1,0 +1,301 @@
+/* Presentation only. Python decides movement, AI, combat, targeting, growth and saves. */
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const canvas=$('board'), ctx=canvas.getContext('2d'), app=$('app'), card=$('card');
+  const T=16, COLS=23, ROWS=17, CW=COLS*T, CH=ROWS*T;
+  const atlas=new Image(); atlas.src='atlas.png';
+  const sprites={floor:0,moss:1,wall:2,wall_dark:3,stairs:4,torch:5,hero:6,hero_step:7,
+    slime:8,skeleton:10,cultist:12,warden:14,potion:16,chest:17,sword:19,bolt:20,whirl:21,
+    shield:22,heart:23,coin:24,skull:25,spark:26,rune:27,banner:28,lamp:30};
+  let state={phase:'menu',events:[]}, visible=new Set(), busy=false, error='', calls=0, ms=0;
+  let liveHero=null, initialized=false, helpOpen=false, helpWasPaused=false, pauseRequested=false;
+  let camera={x:0,y:0}, hover=null, tween=null, enemyTweens={}, effects=[], particles=[];
+  let shakeUntil=0, toastUntil=0, moveAfter=0, fps=60, lastFrame=0, frameCount=0;
+  const icon=(name,extra='')=>{const i=sprites[name]??27;return '<span class="sprite '+extra+'" style="background-position:-'+(i%8*32)+'px -'+(Math.floor(i/8)*32)+'px"></span>'};
+  const text=(id,value)=>{$(id).textContent=String(value)};
+  function showError(value){
+    error=String(value?.message||value);
+    text('errorText',error);$('error').classList.remove('hidden');
+  }
+  function toast(value){text('toast',value);$('toast').classList.add('show');toastUntil=performance.now()+1900}
+  $('dismissError').onclick=()=>{$('error').classList.add('hidden');error=''};
+
+  async function invoke(name,args=[]){
+    if(busy)return;
+    busy=true;app.classList.add('busy');text('saveStatus',name==='load_game'?'读取灯火…':'灯火流转…');
+    const started=performance.now();
+    try{
+      const fn=window.host?(name.startsWith('game.')?host.game[name.slice(5)]:host[name]):null;
+      if(typeof fn!=='function')throw new Error('请使用 python run.py 打开原生游戏窗口。');
+      // Returned dict/list values are live Python proxies, not JS containers.
+      const next=Python.to_value(await fn(...args));
+      calls++;ms=performance.now()-started;
+      if(next&&next.phase){
+        const noTurn=['move','whirl','cast_bolt','heal','wait_turn','interact'].includes(name.replace('game.',''))&&next.revision===state.revision&&next.phase==='playing';
+        const message=next.messages?.[next.messages.length-1];
+        const changedMessage=message&&message!==state.messages?.[state.messages.length-1];
+        error='';$('error').classList.add('hidden');setState(next);
+        if(noTurn&&changedMessage)toast(message);
+      }
+      if(name==='save_game')toast('冒险已保存。灯火会记住你的脚步。');
+      return next;
+    }catch(err){showError(err);return null}
+    finally{
+      busy=false;app.classList.remove('busy');
+      if(state.phase!=='menu')text('saveStatus',state.saved?'灯火已存':'尚未保存');
+      else text('saveStatus','灯火待燃');
+      if(pauseRequested){pauseRequested=false;if(state.player&&!state.paused&&['playing','upgrade'].includes(state.phase))invoke('set_paused',[true]);}
+    }
+  }
+
+  function setState(next){
+    const previous=state;
+    state=next;app.dataset.phase=state.phase;
+    visible=new Set(state.visible||[]);
+    if(next.player){
+      const p=next.player;
+      camera={x:Math.max(0,Math.min(next.width-COLS,p.x-Math.floor(COLS/2))),
+              y:Math.max(0,Math.min(next.height-ROWS,p.y-Math.floor(ROWS/2)))};
+      if(previous.floor!==next.floor){tween=null;enemyTweens={};effects=[];particles=[];}
+      if(next.revision!==previous.revision){
+        const now=performance.now();
+        for(const ev of next.events||[]){
+          if(ev.kind==='move')tween={...ev,time:now};
+          else if(ev.kind==='enemy_move')enemyTweens[ev.id]={...ev,time:now};
+          else if(['hit','hurt','heal','death','melee','enemy_melee','bolt','whirl','enemy_spell','pickup','rage'].includes(ev.kind)){
+            effects.push({...ev,time:now});
+            if(['hit','hurt','death','pickup','heal','rage'].includes(ev.kind))burst(ev.x+.5,ev.y+.5,ev.kind==='heal'?'#9ebc86':ev.kind==='hurt'?'#e49272':'#dfb875',ev.kind==='death'?16:8,now);
+            if(ev.kind==='hurt')shakeUntil=now+210;
+          }
+        }
+      }
+      refreshHUD();
+      if(next.save_error){showError(next.save_error);$('saveStatus').classList.add('bad');}
+      else $('saveStatus').classList.remove('bad');
+    }
+    helpOpen=false;
+    if(next.phase==='menu')showMenu();
+    else if(next.paused)showPause();
+    else if(next.phase==='upgrade')showUpgrades();
+    else if(next.phase==='won'||next.phase==='dead')showEnding();
+    else{$('overlay').classList.add('hidden');canvas.focus();}
+    resize();
+  }
+
+  function refreshHUD(){
+    const p=state.player;
+    // This is the real Python object, cached once and still live across new/load.
+    const hero=liveHero||p;
+    text('levelLabel','Lv. '+hero.level);text('hpText',hero.hp+' / '+hero.max_hp);
+    $('hpFill').style.width=(100*hero.hp/hero.max_hp)+'%';
+    text('attackText',hero.attack);text('armorText',hero.armor);text('potionCount','×'+hero.potions);
+    text('xpText',p.xp+' / '+p.xp_next);$('xpFill').style.width=Math.min(100,100*p.xp/p.xp_next)+'%';
+    text('floorName','第 '+state.floor+' 层 / '+state.floors+' · '+state.floor_name);
+    text('turnCount','第 '+state.turn+' 回合');text('seedLabel','SEED '+state.seed);
+    text('whirlCd',p.whirl_remaining?p.whirl_remaining+' 回合':'就绪');
+    text('boltCd',p.bolt_remaining?p.bolt_remaining+' 回合':'就绪');
+    $('whirlBtn').classList.toggle('cooldown',p.whirl_remaining>0);
+    $('boltBtn').classList.toggle('cooldown',p.bolt_remaining>0);
+    text('killsText',state.kills);text('goldText',state.gold);
+    $('floorPath').querySelectorAll('span').forEach((node,i)=>{node.classList.toggle('active',i+1===state.floor);node.classList.toggle('cleared',i+1<state.floor)});
+    const log=$('logLines');log.textContent='';
+    (state.messages||[]).slice(-4).forEach(line=>{const node=document.createElement('p');node.textContent=line;log.appendChild(node)});
+    log.scrollTop=log.scrollHeight;
+    const boss=(state.enemies||[]).find(e=>e.kind==='warden');
+    $('bossHud').classList.toggle('hidden',!boss||state.phase!=='playing');
+    if(boss){$('bossFill').style.width=(100*boss.hp/boss.max_hp)+'%';text('bossPhase',boss.rage?'面具碎裂 · 第二阶段':'沉眠的旧王');}
+  }
+
+  function dialog(className=''){$('overlay').classList.remove('hidden');card.className='dialog '+className;}
+  function showMenu(){
+    dialog('menu-card');
+    card.innerHTML='<div class="menu-story"><div class="overline">THE LAST LIGHT IN THE DARK</div><h1>烬灯<br>地牢</h1><div class="english-title">EMBERKEEP</div><p>长夜之下，石门再一次打开。<br>握紧你的灯，带着晨光归来。</p><div class="menu-rune"><i></i>四层长夜 · 一次归途<i></i></div></div>'+
+      '<div class="menu-actions"><div class="overline">点燃下一段冒险</div><div class="button-stack"><button id="startBtn" class="primary">点燃烬灯 &nbsp; ↗</button><button id="continueBtn" class="secondary" '+(!state.has_save?'disabled':'')+'>继续冒险</button></div><label class="seed-input">地牢种子 <input id="seedInput" type="text" inputmode="numeric" placeholder="随机" maxlength="10" aria-label="地牢随机种子"></label><button id="guideBtn" class="text-button">初次守灯？查看旅人手册</button><div class="menu-divider"></div><div class="menu-badge">FOUR FLOORS · ONE FLAME</div><p class="under-note">回合制冒险 · 随时保存<br>死亡之后，新的灯火仍会燃起。</p><button id="quitBtn" class="text-button">退出游戏</button></div>';
+    $('startBtn').onclick=()=>{const value=$('seedInput').value.trim();if(value&&!/^\d+$/.test(value)){showError('种子必须是 0 到 2147483647 之间的整数。');return}invoke('new_run',[value?Number(value):null]);};
+    $('continueBtn').onclick=()=>invoke('load_game');$('guideBtn').onclick=showHelp;
+    $('quitBtn').onclick=()=>{if(!busy)host.quit_game().catch(showError)};
+    $('startBtn').focus();
+  }
+  function showUpgrades(){
+    dialog();
+    card.innerHTML='<div class="overline">A GIFT FROM THE EMBERS</div><h1>灯火的馈赠</h1><p class="description">等级 '+state.player.level+' → '+(state.player.level+1)+'<br>选择一份强化，让归途再亮一些。</p><div class="upgrade-grid">'+state.upgrades.map((u,i)=>'<button class="upgrade-card" id="choice'+i+'" data-upgrade="'+u.id+'"><span class="choice-number">0'+(i+1)+'</span>'+icon(u.icon)+'<small>'+u.tag+'</small><strong>'+u.name+'</strong><p>'+u.desc+'</p><kbd>'+(i+1)+'</kbd></button>').join('')+'</div><div class="under-note">按 1 / 2 / 3 选择 · 选择期间时间静止</div>';
+    card.querySelectorAll('[data-upgrade]').forEach(node=>node.onclick=()=>invoke('choose_upgrade',[node.dataset.upgrade]));
+    $('choice0').focus();
+  }
+  function showPause(){
+    dialog();card.innerHTML='<div class="overline">KEEP THE FLAME ALIVE</div><h1>在灯下歇息</h1><p class="description">地牢暂时安静了。<br>你的每一步，都已交给灯火保管。</p><div class="button-stack"><button id="resumeBtn" class="primary">继续前行 &nbsp; ↗</button><button id="saveMenuBtn" class="secondary">保存并返回主菜单</button><button id="pauseGuideBtn" class="text-button">旅人手册</button></div><div class="under-note">Esc 继续 · F5 保存</div>';
+    $('resumeBtn').onclick=()=>invoke('set_paused',[false]);
+    $('saveMenuBtn').onclick=async()=>{const saved=await invoke('save_game');if(saved)await invoke('boot');};
+    $('pauseGuideBtn').onclick=showHelp;$('resumeBtn').focus();
+  }
+  function showEnding(){
+    dialog();const won=state.phase==='won';
+    card.innerHTML='<div class="overline">'+(won?'THE DAWN REMEMBERS YOU':'ANOTHER FLAME, ANOTHER NIGHT')+'</div>'+icon(won?'lamp':'skull','result-emblem')+'<h1>'+(won?'带着晨光归来':'灯火终有余烬')+'</h1><p class="description">'+(won?'无灯守墓者已沉眠，石门之外是黎明。':'旅人的足迹，仍留在漫长的地牢里。')+'</p><div class="result-grid"><span>旅途评分<strong>'+state.score+'</strong></span><span>抵达楼层<strong>'+state.floor+' / 4</strong></span><span>击败敌人<strong>'+state.kills+'</strong></span><span>历经回合<strong>'+state.turn+'</strong></span></div><p class="result-message">等级 '+state.player.level+' · 金币 '+state.gold+' · 种子 '+state.seed+'</p><div class="button-stack"><button id="restartBtn" class="primary">再点一盏灯 &nbsp; ↗</button><button id="endingMenuBtn" class="secondary">回到主菜单</button></div>';
+    $('restartBtn').onclick=()=>invoke('new_run');$('endingMenuBtn').onclick=()=>invoke('boot');$('restartBtn').focus();
+  }
+  async function showHelp(){
+    if(busy)return;
+    helpWasPaused=!!state.paused;
+    if(state.player&&['playing','upgrade'].includes(state.phase)&&!state.paused)await invoke('set_paused',[true]);
+    helpOpen=true;dialog();
+    card.innerHTML='<div class="overline">THE WAY OF THE LANTERN</div><h1>旅人手册</h1><p class="description">先观察，再行动。只有有效的行动才会推进时间。</p><div class="guide-grid"><div><b>走向地牢</b><br><kbd>WASD</kbd>或方向键移动，撞敌近战。<br>点击相邻地面移动；点击远处敌人施法。</div><div><b>让灯火成为武器</b><br><kbd>Q</kbd>旋风斩：横扫四邻格。<br><kbd>E</kbd>余烬弹：攻击最近的有效目标。</div><div><b>活着归来</b><br><kbd>R</kbd>药水：恢复 18 点生命。<br><kbd>Space</kbd>等待；敌人也会行动。</div><div><b>记住你的旅途</b><br><kbd>Esc</kbd>暂停；<kbd>F5</kbd>异步保存。<br>失焦会暂停。菜单可以继续已存的冒险。</div><div><b>辨认敌人的脚步</b><br>软泥隔回合行动；白骨持续追击；<br>术士保持距离，蓄力后攻击标记地格。</div><div><b>地牢的尽头</b><br>击杀和宝箱给予经验，升级随机三选一。<br>走下楼梯，击败第四层守墓者并抵达出口。</div></div><p class="description">红色预警将在下一回合触发。换一个地格，便是一条生路。</p><div class="button-stack"><button id="closeGuideBtn" class="primary">记住了，握紧灯火</button></div>';
+    $('closeGuideBtn').onclick=closeHelp;$('closeGuideBtn').focus();
+  }
+  function closeHelp(){
+    helpOpen=false;
+    if(state.phase==='menu')showMenu();
+    else if(!helpWasPaused&&state.paused)invoke('set_paused',[false]);
+    else if(state.paused)showPause();else setState(state);
+  }
+  $('pauseBtn').onclick=()=>{if(helpOpen){closeHelp();return}if(state.player&&['playing','upgrade'].includes(state.phase))invoke('set_paused',[!state.paused]);};
+  $('helpBtn').onclick=showHelp;
+  // HUD and mouse use Python instance methods; keyboard uses registered functions.
+  [['whirlBtn','whirl'],['boltBtn','cast_bolt'],['healBtn','heal'],['waitBtn','wait_turn']].forEach(([id,method])=>$(id).onclick=()=>invoke('game.'+method));
+
+  function normalizeKey(event){
+    const key=event.key&&event.key!=='Unidentified'?event.key.toLowerCase():'';
+    const names={w:'KeyW',a:'KeyA',s:'KeyS',d:'KeyD',q:'KeyQ',e:'KeyE',r:'KeyR',
+      ' ':'Space',escape:'Escape',arrowup:'ArrowUp',arrowdown:'ArrowDown',arrowleft:'ArrowLeft',arrowright:'ArrowRight',
+      '1':'Digit1','2':'Digit2','3':'Digit3',enter:'Enter',f3:'F3',f5:'F5'};
+    const codes={87:'KeyW',65:'KeyA',83:'KeyS',68:'KeyD',81:'KeyQ',69:'KeyE',82:'KeyR',
+      32:'Space',27:'Escape',38:'ArrowUp',40:'ArrowDown',37:'ArrowLeft',39:'ArrowRight',49:'Digit1',50:'Digit2',51:'Digit3',13:'Enter',114:'F3',116:'F5'};
+    return (event.code&&event.code!=='Unidentified'?event.code:'')||names[key]||codes[event.keyCode]||key;
+  }
+  const keys={KeyW:'up',ArrowUp:'up',KeyD:'right',ArrowRight:'right',KeyS:'down',ArrowDown:'down',KeyA:'left',ArrowLeft:'left',KeyQ:'whirl',KeyE:'bolt',KeyR:'heal',Space:'wait'};
+  window.addEventListener('keydown',event=>{
+    const key=normalizeKey(event);
+    if(event.target.matches?.('input,textarea,[contenteditable=true]'))return;
+    if(keys[key]||['Escape','Enter','F3','F5','Digit1','Digit2','Digit3'].includes(key))event.preventDefault();
+    if(key==='F3'){if(!event.repeat)$('debug').classList.toggle('hidden');return;}
+    if(key==='Escape'){if(!event.repeat)$('pauseBtn').click();return;}
+    if(busy)return;
+    if(key==='F5'&&state.player){if(!event.repeat)invoke('save_game');return;}
+    if(helpOpen)return;
+    if(state.phase==='menu'&&key==='Enter'){if(!event.repeat)$('startBtn').click();return;}
+    if(state.phase==='upgrade'&&!state.paused&&/^Digit[123]$/.test(key)){if(!event.repeat)invoke('choose_upgrade',[state.upgrades[Number(key.slice(-1))-1].id]);return;}
+    if(state.phase!=='playing'||state.paused||!keys[key])return;
+    const moving=['up','right','down','left'].includes(keys[key]);
+    if(event.repeat&&(!moving||performance.now()<moveAfter))return;
+    moveAfter=performance.now()+140;
+    if(moving)invoke('move',[keys[key]]);
+    else invoke({whirl:'whirl',bolt:'cast_bolt',heal:'heal',wait:'wait_turn'}[keys[key]]);
+  });
+  function pauseOnBlur(){moveAfter=0;hover=null;if(state.player&&!state.paused&&['playing','upgrade'].includes(state.phase)){if(busy)pauseRequested=true;else invoke('set_paused',[true]);}}
+  window.addEventListener('blur',pauseOnBlur);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)pauseOnBlur()});
+  canvas.addEventListener('mousedown',event=>{event.preventDefault();canvas.focus();if(event.button!==0||busy||state.phase!=='playing'||state.paused)return;const tile=mouseTile(event);invoke('game.interact',[tile.x,tile.y]);});
+  canvas.addEventListener('mousemove',event=>{
+    hover=mouseTile(event);
+    const enemy=(state.enemies||[]).find(e=>e.x===hover.x&&e.y===hover.y);
+    const item=(state.items||[]).find(i=>i.x===hover.x&&i.y===hover.y);
+    text('inspect',enemy?enemy.name+' · 生命 '+enemy.hp+'/'+enemy.max_hp:item?(item.kind==='potion'?'治疗药水 · 走近拾取':'旧宝箱 · 走近打开'):'WASD 移动 / 近战 · 点击相邻地面或敌人');
+  });
+  canvas.addEventListener('mouseleave',()=>{hover=null});
+  function mouseTile(event){const r=canvas.getBoundingClientRect();return{x:Math.floor((event.clientX-r.left)/r.width*COLS)+camera.x,y:Math.floor((event.clientY-r.top)/r.height*ROWS)+camera.y};}
+  function resize(){const r=$('viewport').getBoundingClientRect();const fit=Math.min((r.width-6)/CW,(r.height-6)/CH);const scale=fit>=1?Math.floor(fit):Math.max(.1,fit);canvas.style.width=Math.floor(CW*scale)+'px';canvas.style.height=Math.floor(CH*scale)+'px';}
+  window.addEventListener('resize',resize);
+
+  function sprite(name,x,y,alpha=1,size=16){
+    if(!atlas.complete||!atlas.naturalWidth)return;
+    const i=typeof name==='number'?name:sprites[name];ctx.globalAlpha=alpha;
+    ctx.drawImage(atlas,(i%8)*16,Math.floor(i/8)*16,16,16,Math.round(x),Math.round(y),size,size);ctx.globalAlpha=1;
+  }
+  function burst(x,y,color,count,time){
+    for(let i=0;i<count;i++)particles.push({x:x*T,y:y*T,vx:(Math.random()-.5)*35,vy:-10-Math.random()*28,life:450+Math.random()*250,color,time});
+    if(particles.length>220)particles=particles.slice(-220);
+  }
+  function worldXY(x,y){return[(x-camera.x)*T,(y-camera.y)*T]}
+  function renderMenu(ts){
+    ctx.fillStyle='#1e1c28';ctx.fillRect(0,0,CW,CH);
+    for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
+      if(y<4||x<2||x>COLS-3)sprite((y+x)%3===0?'wall_dark':'wall',x*T,y*T,.75);
+      else sprite((x*7+y)%11===0?'moss':'floor',x*T,y*T,.6);
+    }
+    for(const x of [3,8,14,19]){for(let y=3;y<11;y++)sprite('wall',x*T,y*T);sprite('torch',x*T,5*T+Math.sin(ts*.003+x));
+      const light=ctx.createRadialGradient(x*T+8,5*T+8,0,x*T+8,5*T+8,58);light.addColorStop(0,'#d88f332e');light.addColorStop(1,'#d88f3300');ctx.fillStyle=light;ctx.fillRect(x*T-50,5*T-50,116,116);}
+    for(let x=9;x<=13;x++)sprite('stairs',x*T,12*T);
+    sprite('hero',11*T,11*T+Math.sin(ts*.002));
+    sprite('banner',5*T,6*T);sprite('banner',17*T,6*T);
+  }
+  function render(ts){
+    const dt=lastFrame?Math.min(100,ts-lastFrame):16;lastFrame=ts;fps=fps*.96+(1000/Math.max(1,dt))*.04;frameCount++;
+    ctx.imageSmoothingEnabled=false;ctx.globalAlpha=1;ctx.fillStyle='#14141e';ctx.fillRect(0,0,CW,CH);
+    ctx.save();
+    if(ts<shakeUntil)ctx.translate(Math.round(Math.sin(ts*.06)*2),Math.round(Math.cos(ts*.09)*1));
+    if(state.phase==='menu'||!state.rows)renderMenu(ts);
+    else{
+      const warnings=new Set((state.warnings||[]).map(t=>t[1]*state.width+t[0]));
+      for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
+        const wx=x+camera.x,wy=y+camera.y,cell=state.rows[wy]?.[wx];
+        if(!cell||cell===' ')continue;
+        const lit=visible.has(wy*state.width+wx),px=x*T,py=y*T;
+        sprite(cell==='#'?(state.rows[wy+1]?.[wx]!=='#'?'wall':'wall_dark'):((wx*7+wy*11)%17===0?'moss':'floor'),px,py);
+        if(cell==='>'){sprite('stairs',px,py);ctx.fillStyle='#eec783';ctx.globalAlpha=.2+.13*Math.sin(ts*.004);ctx.fillRect(px+3,py+2,10,2);ctx.globalAlpha=1;}
+        if(cell==='#'&&lit&&state.rows[wy+1]?.[wx]&&state.rows[wy+1][wx]!=='#'&&(wx+wy*3)%7===0){sprite('torch',px,py);ctx.fillStyle='#ffd98b';ctx.globalAlpha=.6+.2*Math.sin(ts*.01+wx);ctx.fillRect(px+7,py+3,2,2);ctx.globalAlpha=1;}
+        if(!lit){ctx.fillStyle='#12101fc0';ctx.fillRect(px,py,T,T);}
+        if(lit&&warnings.has(wy*state.width+wx)){ctx.fillStyle='#b84b48';ctx.globalAlpha=.34+.12*Math.sin(ts*.009);ctx.fillRect(px,py,T,T);ctx.globalAlpha=1;ctx.strokeStyle='#f29b72';ctx.strokeRect(px+1.5,py+1.5,13,13);ctx.fillStyle='#efbb93';ctx.fillRect(px+7,py+4,2,5);ctx.fillRect(px+7,py+11,2,1);}
+      }
+      for(const item of state.items||[]){const [x,y]=worldXY(item.x,item.y);sprite(item.kind,x,y+Math.sin(ts*.003+item.x)*.5);}
+      for(const enemy of state.enemies||[]){
+        let ex=enemy.x,ey=enemy.y;const tw=enemyTweens[enemy.id];
+        if(tw){const a=Math.min(1,(ts-tw.time)/120);ex=tw.x+(tw.tx-tw.x)*a;ey=tw.y+(tw.ty-tw.y)*a;if(a>=1)delete enemyTweens[enemy.id];}
+        const [x,y]=worldXY(ex,ey);ctx.fillStyle='#0d101955';ctx.fillRect(x+3,y+13,10,2);
+        let frame=sprites[enemy.kind];if(enemy.kind==='warden'&&enemy.rage)frame++;
+        else if(enemy.kind==='cultist'&&enemy.intent.length)frame++;
+        else if(['slime','skeleton'].includes(enemy.kind)&&Math.floor(ts/450)%2)frame++;
+        const hit=effects.some(e=>e.kind==='hit'&&e.target===enemy.id&&ts-e.time<110);
+        if(hit)ctx.globalCompositeOperation='lighter';sprite(frame,x,y);ctx.globalCompositeOperation='source-over';
+        if(enemy.hp<enemy.max_hp){ctx.fillStyle='#251e28';ctx.fillRect(x+2,y-2,12,2);ctx.fillStyle=enemy.kind==='warden'?'#da875b':'#b8846c';ctx.fillRect(x+2,y-2,Math.ceil(12*enemy.hp/enemy.max_hp),1);}
+      }
+      const p=state.player;let hx=p.x,hy=p.y;
+      if(tween){const a=Math.min(1,(ts-tween.time)/120),ease=1-(1-a)**3;hx=tween.x+(tween.tx-tween.x)*ease;hy=tween.y+(tween.ty-tween.y)*ease;if(a>=1)tween=null;}
+      const [px,py]=worldXY(hx,hy);
+      const light=ctx.createRadialGradient(px+8,py+8,7,px+8,py+8,45);light.addColorStop(0,'#eab65e1c');light.addColorStop(1,'#eab65e00');ctx.fillStyle=light;ctx.fillRect(px-38,py-38,92,92);
+      ctx.fillStyle='#11101b88';ctx.fillRect(px+3,py+14,10,2);
+      const hurt=effects.some(e=>e.kind==='hurt'&&ts-e.time<170);
+      if(hurt&&Math.floor(ts/40)%2===0)ctx.globalCompositeOperation='lighter';
+      sprite(tween&&Math.floor(ts/60)%2?'hero_step':'hero',px,py,state.phase==='dead'?.4:1);ctx.globalCompositeOperation='source-over';
+      if(hover&&state.phase==='playing'&&visible.has(hover.y*state.width+hover.x)){const [x,y]=worldXY(hover.x,hover.y);ctx.strokeStyle='#d2b18199';ctx.strokeRect(x+.5,y+.5,15,15);}
+      effects=effects.filter(e=>ts-e.time<820);
+      for(const ev of effects){
+        const elapsed=ts-ev.time,a=elapsed/820;const [x,y]=worldXY(ev.x??0,ev.y??0);
+        if(['hit','hurt','heal'].includes(ev.kind)){
+          ctx.globalAlpha=1-a;ctx.font='bold 7px monospace';ctx.textAlign='center';ctx.fillStyle='#17151d';ctx.fillText((ev.kind==='heal'?'+':'−')+ev.amount,x+9,y-2-a*12);
+          ctx.fillStyle=ev.kind==='heal'?'#bad69c':ev.kind==='hurt'?'#efa083':'#f2dbab';ctx.fillText((ev.kind==='heal'?'+':'−')+ev.amount,x+8,y-3-a*12);ctx.globalAlpha=1;
+        }else if(['melee','enemy_melee'].includes(ev.kind)&&elapsed<170){
+          const [tx,ty]=worldXY(ev.tx,ev.ty);ctx.strokeStyle=ev.kind==='melee'?'#f2d3a1':'#b76165';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x+8,y+8);ctx.lineTo(tx+8,ty+8);ctx.stroke();ctx.lineWidth=1;
+        }else if(ev.kind==='bolt'&&elapsed<260){
+          const [tx,ty]=worldXY(ev.tx,ev.ty);const b=Math.min(1,elapsed/200);sprite('spark',x+(tx-x)*b,y+(ty-y)*b);ctx.fillStyle='#f2c07766';ctx.fillRect(x+(tx-x)*b+6,y+(ty-y)*b+3,4,5);
+        }else if(ev.kind==='whirl'&&elapsed<330){ctx.strokeStyle='#e7c392';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x+8,y+8,6+elapsed/18,elapsed*.015,elapsed*.015+4.5);ctx.stroke();ctx.lineWidth=1;}
+        else if(ev.kind==='enemy_spell'&&elapsed<270){ctx.fillStyle='#f3a66c';ctx.globalAlpha=.6*(1-elapsed/270);for(const tile of ev.tiles){const [tx,ty]=worldXY(tile[0],tile[1]);ctx.fillRect(tx+2,ty+2,12,12);}ctx.globalAlpha=1;}
+      }
+      particles=particles.filter(p=>ts-p.time<p.life);
+      for(const part of particles){const elapsed=(ts-part.time)/1000;ctx.fillStyle=part.color;ctx.globalAlpha=1-(ts-part.time)/part.life;ctx.fillRect(Math.round(part.x+part.vx*elapsed-camera.x*T),Math.round(part.y+part.vy*elapsed+25*elapsed*elapsed-camera.y*T),1+(part.life%2),1);}
+      ctx.globalAlpha=1;
+    }
+    ctx.restore();
+    if(ts>toastUntil)$('toast').classList.remove('show');
+    if(!$('debug').classList.contains('hidden'))text('debug','ULTRALIGHT-PY 0.5.0 / APPCORE\nTyped Python API  ·  '+calls+' calls\nLast roundtrip    '+ms.toFixed(1)+' ms\nPresentation      '+Math.round(fps)+' fps\nLive hero proxy   hp='+ (liveHero?liveHero.hp:'—')+'\nLive game proxy   turn='+(window.host?host.game.turn:'—')+'\nPython.to_value   detached render snapshot\nasyncio Promise   atomic save / load');
+    requestAnimationFrame(render);
+  }
+  window.EmberUI={invoke,diagnostics:()=>({phase:state.phase,turn:state.turn||0,busy,error,initialized,
+    calls,frames:frameCount,paused:!!state.paused,proxyHP:liveHero?liveHero.hp:null,
+    canvas:{width:canvas.width,height:canvas.height,rect:JSON.parse(JSON.stringify(canvas.getBoundingClientRect()))}}),
+    snapshot:()=>state};
+  window.addEventListener('error',ev=>showError(ev.message));
+  window.addEventListener('unhandledrejection',ev=>{showError(ev.reason);ev.preventDefault()});
+  resize();requestAnimationFrame(render);
+  async function initialize(){
+    try{
+      await new Promise((resolve,reject)=>{if(atlas.complete&&atlas.naturalWidth)resolve();else{atlas.onload=resolve;atlas.onerror=()=>reject(new Error('像素图集加载失败。'))}});
+      if(document.fonts)await document.fonts.ready;
+      if(!window.host)throw new Error('Python 引擎未连接。请使用 python run.py 启动。');
+      liveHero=host.game.hero;
+      const result=await invoke('boot');
+      if(!result)throw new Error(error||'游戏初始化失败。');
+      initialized=true;window.EMBER_READY=true;
+    }catch(err){showError(err)}
+  }
+  initialize();
+})();

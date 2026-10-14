@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>烬灯地牢 · EMBERKEEP</title><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="app" data-phase="menu">
+  <header class="topbar">
+    <div class="brand"><span class="sprite brand-torch"></span><div><b>烬灯地牢</b><small>E M B E R K E E P</small></div></div>
+    <nav class="floor-path" id="floorPath" aria-label="楼层进度"><span>I</span><i></i><span>II</span><i></i><span>III</span><i></i><span>IV</span></nav>
+    <div class="header-controls"><span id="saveStatus" class="save-status">灯火待燃</span><button id="helpBtn" class="icon-button" title="操作指南">?</button><button id="pauseBtn" class="icon-button" title="暂停 · Esc">Ⅱ</button></div>
+  </header>
+  <main class="main">
+    <section class="world-panel">
+      <div class="world-heading"><span><i class="tiny-flame"></i><b id="floorName">一盏灯，一次归途。</b></span><span id="turnCount">像素地牢 · 回合冒险</span></div>
+      <div class="viewport" id="viewport">
+        <canvas id="board" width="368" height="272" tabindex="0" aria-label="地牢地图，WASD 移动，点击相邻地面移动或敌人攻击"></canvas>
+        <div class="world-vignette"></div>
+        <div id="bossHud" class="boss-hud hidden"><div><b>无灯守墓者</b><span id="bossPhase">沉眠的旧王</span></div><div class="boss-meter"><i id="bossFill"></i></div></div>
+        <div id="overlay" class="overlay"><div id="card" class="dialog"></div></div>
+        <div id="toast" class="toast" role="status"></div>
+        <div id="error" class="error hidden" role="alert"><span id="errorText"></span><button id="dismissError" aria-label="关闭错误提示">×</button></div>
+        <div id="debug" class="debug hidden"></div>
+      </div>
+      <div class="world-footer"><span id="inspect">WASD 移动 / 近战 · 点击相邻地面或敌人</span><span id="seedLabel">灯火会记住你的脚步</span></div>
+    </section>
+    <aside class="sidebar">
+      <div class="hero-card"><div class="portrait"><span class="sprite hero-portrait"></span></div><div><span class="eyebrow">最后的守灯人</span><h2>旅人<span id="levelLabel">Lv. 1</span></h2><small id="heroSubtitle">灯在，归途就在。</small></div></div>
+      <div class="vitals"><div class="stat-label"><span>生命</span><b id="hpText">42 / 42</b></div><div class="meter hp-meter"><i id="hpFill"></i></div><div class="stat-label xp-label"><span>灯火经验</span><b id="xpText">0 / 7</b></div><div class="meter xp-meter"><i id="xpFill"></i></div><div class="attributes"><span><i class="sprite small sword-icon"></i>锋刃 <b id="attackText">6</b></span><span><i class="sprite small shield-icon"></i>护甲 <b id="armorText">1</b></span></div></div>
+      <div class="skills"><div class="section-title">旅人的技艺<span>每次行动 · 一个回合</span></div>
+        <button id="whirlBtn" class="skill"><span class="sprite whirl-icon"></span><span><b>旋风斩<kbd>Q</kbd></b><small>横扫四邻格的敌人</small></span><em id="whirlCd">就绪</em></button>
+        <button id="boltBtn" class="skill"><span class="sprite bolt-icon"></span><span><b>余烬弹<kbd>E</kbd></b><small>射程 4 格 · 点击敌人指定目标</small></span><em id="boltCd">就绪</em></button>
+        <button id="healBtn" class="skill"><span class="sprite potion-icon"></span><span><b>治疗药水<kbd>R</kbd></b><small>恢复 18 生命 · 消耗一瓶</small></span><em id="potionCount">×3</em></button>
+        <button id="waitBtn" class="wait-button">静候一回合 <kbd>Space</kbd></button>
+      </div>
+      <div class="run-stats"><span><i class="sprite small skull-icon"></i>击败 <b id="killsText">0</b></span><span><i class="sprite small coin-icon"></i>金币 <b id="goldText">0</b></span></div>
+      <div class="journal"><div class="section-title">冒险日志<span class="journal-mark">✦</span></div><div id="logLines" class="log-lines"><p>石门之外，是未知的长夜。</p></div></div>
+      <div class="danger-note"><span>!</span> 红色地格会在下一回合受到攻击。移动避开，灯火才会更长久。</div>
+    </aside>
+  </main>
+  <footer class="bottom"><span>四层长夜 · 一盏烬灯</span><span>Esc 暂停 &nbsp; F5 保存 &nbsp; F3 诊断</span><span>EMBERKEEP <b>01</b></span></footer>
+</div>
+<script src="game.js"></script>
+</body>
+</html>
